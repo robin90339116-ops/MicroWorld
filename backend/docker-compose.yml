@@ -1,0 +1,17 @@
+services:
+  smallworld-backend:
+    build: .
+    container_name: smallworld-backend
+    ports:
+      - "8787:8787"
+    environment:
+      SMALLWORLD_BACKEND_HOST: 0.0.0.0
+      SMALLWORLD_BACKEND_PORT: 8787
+      SMALLWORLD_DATA_FILE: /data/smallworld-data.json
+      SMALLWORLD_CORS_ORIGIN: "*"
+    volumes:
+      - smallworld-data:/data
+    restart: unless-stopped
+
+volumes:
+  smallworld-data:

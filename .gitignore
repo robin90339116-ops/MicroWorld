@@ -1,0 +1,27 @@
+.DS_Store
+
+# DevEco / HarmonyOS generated output
+.hvigor/
+.appanalyzer/
+entry/.preview/
+entry/build/
+entry/oh_modules/
+oh_modules/
+
+# IDE local state
+.idea/
+
+# Logs and runtime data
+*.log
+backend/server.log
+
+# Local environment
+.env
+backend/.env
+
+# Temporary exports/check artifacts
+tmp/
+backend/data.json
+exports/
+entry/src/main/resources/base/media/*_backup.png
+entry/src/main/resources/base/media/*_legacy.svg

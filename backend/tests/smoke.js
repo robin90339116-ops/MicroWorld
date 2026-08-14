@@ -1,0 +1,688 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
+
+const root = path.resolve(__dirname, '..');
+const port = Number(process.env.SMALLWORLD_SMOKE_PORT || 19000 + Math.floor(Math.random() * 1000));
+const dataFile = path.join(os.tmpdir(), `smallworld-smoke-${Date.now()}.json`);
+const baseUrl = `http://127.0.0.1:${port}`;
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function request(pathname, options = {}) {
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : {};
+  return { response, body };
+}
+
+async function waitForHealth() {
+  let lastError = null;
+  for (let index = 0; index < 40; index += 1) {
+    try {
+      const { response, body } = await request('/health');
+      if (response.ok && body.ok === true) {
+        return;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await wait(150);
+  }
+  throw lastError || new Error('SmallWorld backend did not become healthy');
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function authHeaders(token) {
+  return {
+    Authorization: `Bearer ${token}`
+  };
+}
+
+async function main() {
+  const child = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: {
+      ...process.env,
+      SMALLWORLD_BACKEND_HOST: '127.0.0.1',
+      SMALLWORLD_BACKEND_PORT: String(port),
+      SMALLWORLD_DATA_FILE: dataFile
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  child.stdout.on('data', chunk => process.stdout.write(chunk));
+  child.stderr.on('data', chunk => process.stderr.write(chunk));
+
+  try {
+    await waitForHealth();
+
+    const modules = await request('/api/system/modules');
+    assert(modules.response.ok, 'module status endpoint failed');
+    assert(Array.isArray(modules.body.activeModules), 'module status missing activeModules');
+    assert(modules.body.frontendContract && modules.body.frontendContract.bottomTabs.includes('兴趣'), 'module status is not aligned with current frontend tabs');
+
+    const contract = await request('/api/system/frontend-contract');
+    assert(contract.response.ok, 'frontend contract endpoint failed');
+    assert(contract.body.bottomTabs.map(item => item.label).join('|') === '探索|兴趣|世界|聊天|我', 'frontend contract has wrong bottom tab order');
+
+    const places = await request('/api/explore/places?latitude=-37.8136&longitude=144.9637');
+    assert(places.response.ok, 'explore places endpoint failed');
+    assert(Array.isArray(places.body.places) && places.body.places.length > 0, 'explore places returned no places');
+    assert(Array.isArray(places.body.activities) && places.body.activities.length > 0, 'explore places returned no activities');
+    assert(places.body.meta && places.body.meta.contract === 'SmallWorld Explore v1', 'explore meta contract missing');
+    const firstPlace = places.body.places[0];
+    assert(firstPlace.id && firstPlace.introduction && firstPlace.address, 'place card/detail fields are incomplete');
+    assert(firstPlace.rating && Number.isFinite(firstPlace.rating.comfort), 'place rating fields are incomplete');
+    assert(Number.isFinite(firstPlace.attendanceCount) && Number.isFinite(firstPlace.nfcTouches), 'place real attendance/touch metrics are incomplete');
+    assert(firstPlace.mapMarker && Number.isFinite(firstPlace.mapMarker.latitude), 'place map marker missing');
+    assert(firstPlace.socialMetrics && firstPlace.socialMetrics.trustLabel, 'place social metrics missing');
+    assert(firstPlace.routeEntrypoints && firstPlace.routeEntrypoints.routePlan === true, 'place route entrypoints missing');
+
+    const email = `smoke-${Date.now()}@smallworld.local`;
+    const register = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        displayName: 'Smoke Tester',
+        email,
+        password: 'SmallWorld123',
+        deviceId: 'smoke-device'
+      })
+    });
+    assert(register.response.status === 201, `register failed: ${JSON.stringify(register.body)}`);
+    assert(register.body.token, 'register did not return token');
+
+    const me = await request('/api/auth/me', {
+      headers: authHeaders(register.body.token)
+    });
+    assert(me.response.ok, 'auth me endpoint failed');
+    assert(me.body.user && me.body.user.email === email, 'auth me returned wrong user');
+
+    const profile = await request('/api/auth/profile', {
+      method: 'POST',
+      headers: authHeaders(register.body.token),
+      body: JSON.stringify({
+        displayName: 'Smoke Tester',
+        interests: ['咖啡', '读书', '城市探索', '摄影'],
+        socialIntent: '遇见同频的人'
+      })
+    });
+    assert(profile.response.ok, `profile update failed: ${JSON.stringify(profile.body)}`);
+    assert(profile.body.user.profileComplete === true, 'profile did not become complete');
+
+    const logout = await request('/api/auth/logout', {
+      method: 'POST',
+      headers: authHeaders(register.body.token)
+    });
+    assert(logout.response.ok, 'logout failed');
+
+    const meAfterLogout = await request('/api/auth/me', {
+      headers: authHeaders(register.body.token)
+    });
+    assert(meAfterLogout.response.status === 401, 'logged out token should be rejected');
+
+    const login = await request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        password: 'SmallWorld123',
+        deviceId: 'smoke-device'
+      })
+    });
+    assert(login.response.ok, `login failed: ${JSON.stringify(login.body)}`);
+    assert(login.body.token && login.body.token !== register.body.token, 'login should return a fresh token');
+    const token = login.body.token;
+
+    const meProfile = await request('/api/me/profile', {
+      headers: authHeaders(token)
+    });
+    assert(meProfile.response.ok, 'me profile endpoint failed');
+    assert(meProfile.body.contract === 'SmallWorld Profile v1', 'me profile contract marker missing');
+    assert(Array.isArray(meProfile.body.menu) && meProfile.body.menu.length === 7, 'me profile menu does not match current frontend');
+    assert(Array.isArray(meProfile.body.settingsRows) && meProfile.body.settingsRows.length >= 5, 'me settings rows missing');
+    assert(Array.isArray(meProfile.body.interestStats) && meProfile.body.interestStats.length > 0, 'me interest stats missing');
+    assert(meProfile.body.privacyGuardrails && meProfile.body.privacyGuardrails.invisibleSupported === true, 'me profile privacy guardrails missing');
+
+    const settingsSave = await request('/api/me/settings', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        invisible: true,
+        todayHidden: true,
+        messageNotificationsEnabled: false
+      })
+    });
+    assert(settingsSave.response.ok, `me settings save failed: ${JSON.stringify(settingsSave.body)}`);
+    assert(settingsSave.body.settings.invisible === true && settingsSave.body.settings.todayHidden === true, 'me settings did not persist privacy switches');
+    assert(settingsSave.body.settings.messageNotificationsEnabled === false, 'me settings did not persist notification switch');
+
+    const meFeaturePaths = [
+      ['/api/me/trophies', 'trophies'],
+      ['/api/me/moments', 'moments'],
+      ['/api/me/clubs', 'clubs'],
+      ['/api/me/schedule', 'schedule'],
+      ['/api/me/interest-data', 'interests'],
+      ['/api/me/nfc', 'exchanges'],
+      ['/api/me/settings', 'settings'],
+      ['/api/me/meTrophies', 'trophies']
+    ];
+    for (const [pathname, field] of meFeaturePaths) {
+      const feature = await request(pathname, {
+        headers: authHeaders(token)
+      });
+      assert(feature.response.ok, `${pathname} endpoint failed`);
+      assert(feature.body.contract === 'SmallWorld Profile v1', `${pathname} contract marker missing`);
+      assert(feature.body[field] !== undefined, `${pathname} missing ${field}`);
+    }
+
+    const deferredWorldProfile = await request('/api/me/worlds', {
+      headers: authHeaders(token)
+    });
+    assert(deferredWorldProfile.response.ok, 'me worlds placeholder endpoint failed');
+    assert(deferredWorldProfile.body.status === 'WORLD_BACKEND_DEFERRED', 'me worlds should remain deferred');
+
+    const social = await request('/api/social/home', {
+      headers: authHeaders(token)
+    });
+    assert(social.response.ok, 'social home endpoint failed');
+    assert(social.body.contract === 'SmallWorld Social Chat v1', 'social chat contract marker missing');
+    assert(social.body.guardrails && social.body.guardrails.groupsEnabled === false, 'social chat should disable groups');
+    assert(Array.isArray(social.body.friends) && social.body.friends.length > 0, 'social friends missing');
+    assert(Array.isArray(social.body.chats) && social.body.chats.length > 0, 'social chats missing');
+    assert(social.body.friends.every(friend => friend.place && friend.momentText && Number.isFinite(friend.score)), 'friend display contract fields missing');
+    assert(social.body.chats.every(chat => chat.isGroup === false && chat.type === 'direct'), 'social chats must be one-to-one only');
+
+    const friendsList = await request('/api/friends', {
+      headers: authHeaders(token)
+    });
+    assert(friendsList.response.ok, 'friends list endpoint failed');
+    assert(friendsList.body.guardrails && friendsList.body.guardrails.relationshipRequired === true, 'friends guardrails missing');
+
+    const friendDetail = await request(`/api/friends/${encodeURIComponent(social.body.friends[0].id)}`, {
+      headers: authHeaders(token)
+    });
+    assert(friendDetail.response.ok, 'friend detail endpoint failed');
+    assert(friendDetail.body.friend && friendDetail.body.friend.relationshipVerified === true, 'friend detail relationship marker missing');
+
+    const startChat = await request(`/api/friends/${encodeURIComponent(social.body.friends[0].id)}/chat`, {
+      method: 'POST',
+      headers: authHeaders(token)
+    });
+    assert(startChat.response.ok, 'start friend chat endpoint failed');
+    assert(startChat.body.chat && startChat.body.chat.isGroup === false, 'started chat should be direct');
+
+    const chatsList = await request('/api/chats', {
+      headers: authHeaders(token)
+    });
+    assert(chatsList.response.ok, 'chat list endpoint failed');
+    assert(chatsList.body.chats.every(chat => chat.isGroup === false), 'chat list should not contain groups');
+
+    const chatId = social.body.chats[0].id;
+    const messages = await request(`/api/chats/${encodeURIComponent(chatId)}/messages`, {
+      headers: authHeaders(token)
+    });
+    assert(messages.response.ok, 'chat messages endpoint failed');
+    assert(messages.body.guardrails && messages.body.guardrails.chatType === 'one-to-one', 'chat messages guardrails missing');
+    assert(Array.isArray(messages.body.messages) && messages.body.messages.length > 0, 'chat messages missing');
+
+    const sendMessage = await request(`/api/chats/${encodeURIComponent(chatId)}/messages`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ text: 'smoke test message' })
+    });
+    assert(sendMessage.response.status === 201, `send chat message failed: ${JSON.stringify(sendMessage.body)}`);
+    assert(sendMessage.body.chatMessage && sendMessage.body.chatMessage.text === 'smoke test message', 'sent chat message body mismatch');
+    assert(sendMessage.body.chat && sendMessage.body.chat.isGroup === false, 'sent chat should remain direct');
+
+    const moments = await request('/api/social/moments', {
+      headers: authHeaders(token)
+    });
+    assert(moments.response.ok, 'moments endpoint failed');
+    assert(Array.isArray(moments.body.moments), 'moments list missing');
+
+    const myMoments = await request('/api/social/my-moments', {
+      headers: authHeaders(token)
+    });
+    assert(myMoments.response.ok, 'my moments endpoint failed');
+    assert(Array.isArray(myMoments.body.moments), 'my moments list missing');
+
+    const newMoment = await request('/api/social/moments', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ text: 'smoke test moment', place: 'State Library' })
+    });
+    assert(newMoment.response.status === 201, `create moment failed: ${JSON.stringify(newMoment.body)}`);
+    assert(newMoment.body.moment && newMoment.body.moment.visibility === 'seen-connections', 'moment visibility should be limited to seen connections');
+
+    const connectionDecision = await request('/api/connections/request-nightphoto/decline', {
+      method: 'POST',
+      headers: authHeaders(token)
+    });
+    assert(connectionDecision.response.ok, 'connection decline endpoint failed');
+    assert(connectionDecision.body.guardrails && connectionDecision.body.guardrails.groupsEnabled === false, 'connection guardrails missing');
+
+    const safetyHome = await request('/api/safety/home', {
+      headers: authHeaders(token)
+    });
+    assert(safetyHome.response.ok, 'safety home endpoint failed');
+    assert(safetyHome.body.contract === 'SmallWorld Safety v1', 'safety home contract marker missing');
+    assert(safetyHome.body.guardrails && safetyHome.body.guardrails.frontendCanRemainUnchanged === true, 'safety guardrails missing');
+
+    const safetyPrivacy = await request('/api/safety/privacy', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        invisible: true,
+        todayHidden: false,
+        nfcEnabled: true
+      })
+    });
+    assert(safetyPrivacy.response.ok, `safety privacy failed: ${JSON.stringify(safetyPrivacy.body)}`);
+    assert(safetyPrivacy.body.settings.invisible === true && safetyPrivacy.body.settings.todayHidden === false, 'safety privacy did not persist');
+
+    const safetyReport = await request('/api/safety/reports', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        targetType: 'user',
+        targetId: 'photo',
+        targetUserId: 'photo',
+        reason: '骚扰',
+        placeId: firstPlace.id,
+        description: 'smoke safety report'
+      })
+    });
+    assert(safetyReport.response.status === 201, `safety report failed: ${JSON.stringify(safetyReport.body)}`);
+    assert(safetyReport.body.report && safetyReport.body.report.status === 'open', 'safety report body mismatch');
+
+    const reportsList = await request('/api/safety/reports', {
+      headers: authHeaders(token)
+    });
+    assert(reportsList.response.ok, 'safety report list failed');
+    assert(reportsList.body.reports.some(reportItem => reportItem.id === safetyReport.body.report.id), 'safety report list missing created report');
+
+    const safetyBlock = await request('/api/safety/blocks', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        targetUserId: 'photo',
+        targetName: '慢半拍摄影',
+        reason: 'smoke block'
+      })
+    });
+    assert(safetyBlock.response.status === 201, `safety block failed: ${JSON.stringify(safetyBlock.body)}`);
+    assert(safetyBlock.body.block && safetyBlock.body.block.status === 'active', 'safety block body mismatch');
+
+    const friendsAfterBlock = await request('/api/friends', {
+      headers: authHeaders(token)
+    });
+    assert(friendsAfterBlock.response.ok, 'friends after block failed');
+    assert(!friendsAfterBlock.body.friends.some(friend => friend.id === 'photo'), 'blocked user should be filtered from friends');
+
+    const chatsAfterBlock = await request('/api/chats', {
+      headers: authHeaders(token)
+    });
+    assert(chatsAfterBlock.response.ok, 'chats after block failed');
+    assert(!chatsAfterBlock.body.chats.some(chat => chat.friendId === 'photo'), 'blocked user should be filtered from chats');
+
+    const unblock = await request(`/api/safety/blocks/${encodeURIComponent(safetyBlock.body.block.id)}/remove`, {
+      method: 'POST',
+      headers: authHeaders(token)
+    });
+    assert(unblock.response.ok, 'safety unblock failed');
+    assert(unblock.body.block && unblock.body.block.status === 'removed', 'safety unblock body mismatch');
+
+    const panic = await request('/api/safety/panic', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        placeId: firstPlace.id,
+        latitude: -37.8136,
+        longitude: 144.9637,
+        deviceId: 'smoke-device',
+        message: 'smoke panic event'
+      })
+    });
+    assert(panic.response.status === 201, `safety panic failed: ${JSON.stringify(panic.body)}`);
+    assert(panic.body.event && panic.body.event.severity === 'high' && panic.body.event.status === 'open', 'safety panic body mismatch');
+
+    const panicResolve = await request(`/api/safety/events/${encodeURIComponent(panic.body.event.id)}/resolve`, {
+      method: 'POST',
+      headers: authHeaders(token)
+    });
+    assert(panicResolve.response.ok, 'safety panic resolve failed');
+    assert(panicResolve.body.event && panicResolve.body.event.status === 'resolved', 'safety panic resolve body mismatch');
+
+    const safetyAudit = await request('/api/safety/audit', {
+      headers: authHeaders(token)
+    });
+    assert(safetyAudit.response.ok, 'safety audit failed');
+    assert(Array.isArray(safetyAudit.body.reports) && Array.isArray(safetyAudit.body.blocks) && Array.isArray(safetyAudit.body.events), 'safety audit lists missing');
+
+    const placeDetail = await request(`/api/places/${encodeURIComponent(firstPlace.id)}`);
+    assert(placeDetail.response.ok, 'place detail endpoint failed');
+    assert(placeDetail.body.place.introduction && Array.isArray(placeDetail.body.place.activities), 'place detail missing introduction or activities');
+    assert(placeDetail.body.recognitionPreview && Array.isArray(placeDetail.body.recognitionPreview.leaderboards), 'place detail recognition preview missing');
+    assert(Number.isFinite(placeDetail.body.recognitionPreview.medalCount), 'place detail medal preview missing');
+
+    const activity = placeDetail.body.place.activities[0];
+    const activityDetail = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/activities/${encodeURIComponent(activity.id)}`);
+    assert(activityDetail.response.ok, 'place activity detail endpoint failed');
+    assert(activityDetail.body.activity.description && Array.isArray(activityDetail.body.activity.rules), 'activity detail missing description or rules');
+    assert(activityDetail.body.activity.recognition && activityDetail.body.activity.recognition.leaderboardMode, 'activity recognition contract missing');
+
+    const blockedFeed = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/room/feed`, {
+      headers: authHeaders(token)
+    });
+    assert(blockedFeed.response.status === 403, 'place room feed should require an opened place page token');
+
+    const room = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/room/open`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ deviceId: 'smoke-device' })
+    });
+    assert(room.response.status === 201, `place room open failed: ${JSON.stringify(room.body)}`);
+    assert(room.body.roomToken, 'place room open did not return room token');
+    assert(room.body.guardrails && room.body.guardrails.placeOnly === true, 'place room guardrails missing');
+
+    const feed = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/room/feed`, {
+      headers: {
+        ...authHeaders(token),
+        'X-Place-Room-Token': room.body.roomToken
+      }
+    });
+    assert(feed.response.ok, 'place room feed endpoint failed');
+    assert(Array.isArray(feed.body.posts), 'place room feed missing posts');
+
+    const placeMessage = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/room/messages`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(token),
+        'X-Place-Room-Token': room.body.roomToken
+      },
+      body: JSON.stringify({ text: '地点页公共聊天 smoke' })
+    });
+    assert(placeMessage.response.status === 201, `place room message failed: ${JSON.stringify(placeMessage.body)}`);
+    assert(placeMessage.body.post && placeMessage.body.post.placeId === firstPlace.id, 'place room message returned wrong post');
+    assert(placeMessage.body.guardrails && placeMessage.body.guardrails.publicChatScope === 'current-place', 'place room message guardrails missing');
+
+    const placeShare = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/room/shares`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(token),
+        'X-Place-Room-Token': room.body.roomToken
+      },
+      body: JSON.stringify({
+        text: '分享今晚活动入口',
+        activityId: activity.id,
+        shareLabel: '活动分享'
+      })
+    });
+    assert(placeShare.response.status === 201, `place room share failed: ${JSON.stringify(placeShare.body)}`);
+    assert(placeShare.body.post && placeShare.body.post.type === 'share', 'place room share returned wrong post type');
+
+    const closeRoom = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/room/close`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(token),
+        'X-Place-Room-Token': room.body.roomToken
+      }
+    });
+    assert(closeRoom.response.ok, 'place room close failed');
+
+    const feedAfterClose = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/room/feed`, {
+      headers: {
+        ...authHeaders(token),
+        'X-Place-Room-Token': room.body.roomToken
+      }
+    });
+    assert(feedAfterClose.response.status === 403, 'closed place room token should be rejected');
+
+    const routePlan = await request('/api/explore/route-plan', {
+      method: 'POST',
+      body: JSON.stringify({ placeId: firstPlace.id, latitude: -37.8136, longitude: 144.9637 })
+    });
+    assert(routePlan.response.ok, 'route plan endpoint failed');
+    assert(Number.isFinite(routePlan.body.distanceMeters) && Number.isFinite(routePlan.body.durationMinutes), 'route plan metrics missing');
+    assert(routePlan.body.systemNavigation && routePlan.body.systemNavigation.enabled === true, 'route plan system navigation missing');
+    assert(routePlan.body.aiRoute && routePlan.body.aiRoute.deferred === true, 'route plan AI deferred flag missing');
+
+    const interests = await request('/api/interests?q=读书');
+    assert(interests.response.ok, 'interest search endpoint failed');
+    assert(interests.body.contract === 'SmallWorld Interest/Club v1', 'interest contract marker missing');
+    assert(Array.isArray(interests.body.categories) && interests.body.categories.includes('艺术'), 'interest categories missing');
+    assert(Array.isArray(interests.body.topics) && interests.body.topics.length > 0, 'interest search returned no topics');
+    const firstTopic = interests.body.topics[0];
+    assert(firstTopic.summary && Array.isArray(firstTopic.learningSteps) && Array.isArray(firstTopic.places), 'interest topic learning/place fields missing');
+    assert(Array.isArray(firstTopic.clubs) && firstTopic.clubs.length > 0, 'interest topic clubs missing');
+
+    const interestDetail = await request(`/api/interests/${encodeURIComponent(firstTopic.id)}`);
+    assert(interestDetail.response.ok, 'interest detail endpoint failed');
+    assert(interestDetail.body.topic && interestDetail.body.topic.id === firstTopic.id, 'interest detail returned wrong topic');
+
+    const interestClubs = await request(`/api/interests/${encodeURIComponent(firstTopic.id)}/clubs`);
+    assert(interestClubs.response.ok, 'interest clubs endpoint failed');
+    assert(Array.isArray(interestClubs.body.clubs) && interestClubs.body.clubs.length > 0, 'interest clubs missing');
+
+    const club = await request(`/api/clubs/${encodeURIComponent(firstTopic.clubs[0].id)}`);
+    assert(club.response.ok, 'club detail endpoint failed');
+    assert(club.body.club && club.body.club.place, 'club detail missing bound place');
+
+    const clubRank = await request(`/api/clubs/${encodeURIComponent(firstTopic.clubs[0].id)}/leaderboard`);
+    assert(clubRank.response.ok, 'club leaderboard endpoint failed');
+    assert(Array.isArray(clubRank.body.entries) && clubRank.body.entries.length > 0, 'club leaderboard entries missing');
+
+    const recognition = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/recognition`, {
+      headers: authHeaders(token)
+    });
+    assert(recognition.response.ok, 'place recognition endpoint failed');
+    assert(Array.isArray(recognition.body.leaderboards) && Array.isArray(recognition.body.medals), 'place leaderboard/medal fields missing');
+    assert(recognition.body.rating && recognition.body.rating.trustLabel, 'place recognition rating summary missing');
+    assert(recognition.body.medals.every(medal => medal.tokenStandard && medal.chainStatus), 'place medal collectible fields missing');
+
+    const readerEmail = `smoke-reader-${Date.now()}@smallworld.local`;
+    const reader = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        displayName: 'Smoke Reader',
+        email: readerEmail,
+        password: 'SmallWorld123',
+        deviceId: 'reader-device'
+      })
+    });
+    assert(reader.response.status === 201, `reader register failed: ${JSON.stringify(reader.body)}`);
+
+    const nfcSession = await request('/api/nfc/sessions', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ placeId: firstPlace.id, hostDeviceId: 'host-device' })
+    });
+    assert(nfcSession.response.status === 201, `nfc session failed: ${JSON.stringify(nfcSession.body)}`);
+    assert(nfcSession.body.contract === 'SmallWorld NFC Proof v1', 'nfc session contract marker missing');
+    assert(nfcSession.body.sessionId && nfcSession.body.touchToken, 'nfc session missing token');
+    assert(nfcSession.body.guardrails && nfcSession.body.guardrails.phoneToPhoneOnly === true, 'nfc session guardrails missing');
+
+    const sameDeviceNfc = await request('/api/nfc/sessions/confirm', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        sessionId: nfcSession.body.sessionId,
+        touchToken: nfcSession.body.touchToken,
+        readerDeviceId: 'host-device',
+        transport: 'iso_dep_apdu',
+        challenge: 'abcdef1234567890',
+        gpsVerified: true
+      })
+    });
+    assert(sameDeviceNfc.response.status === 409, 'nfc should reject same user or same device touch');
+
+    const confirmNfc = await request('/api/nfc/sessions/confirm', {
+      method: 'POST',
+      headers: authHeaders(reader.body.token),
+      body: JSON.stringify({
+        sessionId: nfcSession.body.sessionId,
+        touchToken: nfcSession.body.touchToken,
+        readerDeviceId: 'reader-device',
+        transport: 'iso_dep_apdu',
+        challenge: 'abcdef1234567890',
+        gpsVerified: true
+      })
+    });
+    assert(confirmNfc.response.status === 201, `nfc confirm failed: ${JSON.stringify(confirmNfc.body)}`);
+    assert(confirmNfc.body.contract === 'SmallWorld NFC Proof v1', 'nfc confirm contract marker missing');
+    assert(confirmNfc.body.proofId, 'nfc confirm missing proofId');
+    assert(confirmNfc.body.guardrails && confirmNfc.body.guardrails.transport === 'iso_dep_apdu', 'nfc confirm transport guardrail missing');
+
+    const nfcStatus = await request(`/api/nfc/sessions/${encodeURIComponent(nfcSession.body.sessionId)}`, {
+      headers: authHeaders(token)
+    });
+    assert(nfcStatus.response.ok, 'nfc session status endpoint failed');
+    assert(nfcStatus.body.contract === 'SmallWorld NFC Proof v1', 'nfc status contract marker missing');
+    assert(nfcStatus.body.proofId === confirmNfc.body.proofId, 'nfc status proof mismatch');
+
+    const nfcProofs = await request('/api/nfc/proofs', {
+      headers: authHeaders(token)
+    });
+    assert(nfcProofs.response.ok, 'nfc proofs endpoint failed');
+    assert(nfcProofs.body.contract === 'SmallWorld NFC Proof v1', 'nfc proofs contract marker missing');
+    assert(nfcProofs.body.proofs.some(proof => proof.id === confirmNfc.body.proofId), 'nfc proofs list missing generated proof');
+
+    const review = await request('/api/reviews/nfc', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        placeId: firstPlace.id,
+        proofId: confirmNfc.body.proofId,
+        scores: { comfort: 92, match: 88, safety: 95, activity: 86, world: 76 },
+        comment: 'smoke review',
+        repeatVisit: true
+      })
+    });
+    assert(review.response.status === 201, `nfc review failed: ${JSON.stringify(review.body)}`);
+    assert(review.body.contract === 'SmallWorld Review Rating v1', 'review rating contract marker missing');
+    assert(Number.isFinite(review.body.reviewWeight) && review.body.reviewWeight > 1, 'review weight missing');
+    assert(review.body.guardrails && review.body.guardrails.requiresNfcProof === true, 'review guardrails missing');
+    assert(review.body.place && review.body.place.verifiedReviews >= firstPlace.verifiedReviews, 'review did not return updated place');
+
+    const duplicateReview = await request('/api/reviews/nfc', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        placeId: firstPlace.id,
+        proofId: confirmNfc.body.proofId,
+        scores: { comfort: 92, match: 88, safety: 95, activity: 86, world: 76 },
+        comment: 'duplicate smoke review',
+        repeatVisit: true
+      })
+    });
+    assert(duplicateReview.response.status === 409, 'duplicate nfc review should be rejected');
+
+    const placeRating = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/rating`);
+    assert(placeRating.response.ok, 'place rating endpoint failed');
+    assert(placeRating.body.contract === 'SmallWorld Review Rating v1', 'place rating contract marker missing');
+    assert(placeRating.body.summary && Number.isFinite(placeRating.body.summary.trustScore), 'place rating summary missing');
+    assert(Array.isArray(placeRating.body.dimensions) && placeRating.body.dimensions.length === 5, 'place rating dimensions missing');
+
+    const merchantTap = await request('/api/merchant/taps', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        placeId: 'coffee',
+        deviceId: 'consumer-phone',
+        merchantDeviceId: 'market-lane-terminal',
+        merchantId: 'merchant-market-lane'
+      })
+    });
+    assert(merchantTap.response.status === 201, `merchant tap failed: ${JSON.stringify(merchantTap.body)}`);
+    assert(merchantTap.body.contract === 'SmallWorld Merchant Tap v1', 'merchant tap contract marker missing');
+    assert(merchantTap.body.guardrails && merchantTap.body.guardrails.separatedFromPhoneToPhoneProof === true, 'merchant tap guardrails missing');
+    const tapId = merchantTap.body.tap.id;
+
+    const merchantConflict = await request('/api/merchant/taps', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        placeId: 'coffee',
+        deviceId: 'same-device',
+        merchantDeviceId: 'same-device'
+      })
+    });
+    assert(merchantConflict.response.status === 409, 'merchant tap should reject same consumer and merchant device');
+
+    const merchantCheckin = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/checkin`, {
+      method: 'POST',
+      headers: authHeaders(token)
+    });
+    assert(merchantCheckin.response.ok, `merchant checkin failed: ${JSON.stringify(merchantCheckin.body)}`);
+    assert(merchantCheckin.body.tap.status === 'checked-in', 'merchant checkin status mismatch');
+
+    const merchantPayment = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/payments`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        itemName: 'Flat White',
+        amount: 6.5,
+        currency: 'AUD'
+      })
+    });
+    assert(merchantPayment.response.status === 201, `merchant payment failed: ${JSON.stringify(merchantPayment.body)}`);
+    assert(merchantPayment.body.order && merchantPayment.body.order.status === 'paid', 'merchant payment order missing');
+
+    const merchantItemReview = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/item-reviews`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        itemName: 'Flat White',
+        stars: 5,
+        tags: ['顺滑', '适合聊天'],
+        comment: '适合低压力碰面前喝一杯。'
+      })
+    });
+    assert(merchantItemReview.response.status === 201, `merchant item review failed: ${JSON.stringify(merchantItemReview.body)}`);
+    assert(merchantItemReview.body.review && merchantItemReview.body.review.stars === 5, 'merchant item review body mismatch');
+
+    const merchantTapList = await request('/api/merchant/taps', {
+      headers: authHeaders(token)
+    });
+    assert(merchantTapList.response.ok, 'merchant tap list failed');
+    assert(merchantTapList.body.contract === 'SmallWorld Merchant Tap v1', 'merchant tap list contract marker missing');
+    assert(merchantTapList.body.taps.some(tap => tap.id === tapId && tap.orderCount >= 1 && tap.itemReviewCount >= 1), 'merchant tap list missing completed tap');
+
+    const aiRoute = await request('/api/explore/ai-route', { method: 'POST', body: JSON.stringify({}) });
+    assert(aiRoute.response.status === 501, 'deferred AI route should return 501');
+
+    const interestAi = await request('/api/interests/ai-assistant', { method: 'POST', body: JSON.stringify({}) });
+    assert(interestAi.response.status === 501, 'deferred interest AI should return 501');
+
+    const worlds = await request('/api/worlds', {
+      headers: authHeaders(token)
+    });
+    assert(worlds.response.status === 501, 'deferred worlds endpoint should return 501');
+
+    console.log('SmallWorld backend smoke test passed.');
+  } finally {
+    child.kill('SIGTERM');
+    if (fs.existsSync(dataFile)) {
+      fs.rmSync(dataFile, { force: true });
+    }
+  }
+}
+
+main().catch(error => {
+  console.error(error);
+  process.exit(1);
+});

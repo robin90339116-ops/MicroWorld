@@ -1,0 +1,11 @@
+{
+  "modelVersion": "5.0.4",
+  "name": "small-world",
+  "version": "0.1.0",
+  "description": "SmallWorld：基于真实地点、兴趣空间、实景 AR 和真实见过关系的线下社交 App",
+  "main": "",
+  "author": "Small World",
+  "license": "UNLICENSED",
+  "dependencies": {},
+  "devDependencies": {}
+}

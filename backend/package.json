@@ -1,0 +1,24 @@
+{
+  "name": "smallworld-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MicroWorld backend API for offline social, places, NFC proof reviews, chat, and profile modules.",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "SMALLWORLD_BACKEND_HOST=0.0.0.0 SMALLWORLD_BACKEND_PORT=8787 node server.js",
+    "smoke": "node tests/smoke.js"
+  },
+  "keywords": [
+    "smallworld",
+    "harmonyos",
+    "offline-social",
+    "nfc",
+    "places"
+  ],
+  "license": "UNLICENSED"
+}
