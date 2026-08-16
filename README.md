@@ -1,4 +1,4 @@
-# MicroWorld HarmonyOS App Prototype
+# MicroWorld HarmonyOS App
 
 “MicroWorld”是一个聚焦线下社交的 HarmonyOS App 原型：用户在真实地点到场、完成 AR 互动或共同任务后，才能建立更深层关系。
 
@@ -16,7 +16,6 @@
 - AR 实景导航页（2D / AR 切换）、共享世界页（可见范围 + 链接 / 二维码 / 发给好友）
 - 双手机 NFC HCE / ISO-DEP 真实碰触评价 MVP
 - NFC 碰一碰扩展：好友碰面免确认结果页（NFT 掉落 + 好感度）、商家碰一碰流程（碰门贴 → 打卡 / 支付 → 评价地点 / 评价消费物品 → 纪念徽章）
-- 静态移动端预览：`prototype/index.html`
 - 页面导航规格：`docs/NAVIGATION_FLOW_SPEC.md`（自 Claude Design 流程图导入，设计源文件在 `exports/design/`）
 
 ## 已加入开发计划
@@ -40,10 +39,4 @@
 3. 主页面源码在 `entry/src/main/ets/pages/Index.ets`。
 4. 资源与页面注册在 `entry/src/main/resources/base/` 和 `entry/src/main/module.json5`。
 
-## 快速预览
-
-不用鸿蒙环境时，可以直接在浏览器打开：
-
-`prototype/index.html`
-
-这个预览用于确认信息架构、页面节奏和核心交互，后续再把样式和组件继续迁到 ArkUI。
+当前前端已经统一为 ArkUI 原生页面，不再保留 HTML/WebView 预览前端。
