@@ -1,0 +1,50 @@
+# 本地验证「数据库持久化」链路:用一个本地 Postgres 模拟华为云 GaussDB/RDS。
+# GaussDB(openGauss)与 RDS for PostgreSQL 都走 Postgres 协议,本地 Postgres 验证通过后,
+# 上云只需把 SMALLWORLD_DATABASE_URL 换成华为云实例地址即可。
+#
+# 用法:
+#   cd backend
+#   docker compose -f docker-compose.db.yml up --build
+#   # 起来后:curl http://127.0.0.1:8787/health  应返回 "dataMode":"huawei-gaussdb"
+#
+# 跑数据库模式的冒烟测试(需要本机已 npm install,且 db 已在 5433 端口就绪):
+#   SMALLWORLD_DATABASE_URL=postgres://microworld:microworld@127.0.0.1:5433/microworld \
+#   SMALLWORLD_DATABASE_SSL=disable npm run smoke:db
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: microworld-db
+    environment:
+      POSTGRES_USER: microworld
+      POSTGRES_PASSWORD: microworld
+      POSTGRES_DB: microworld
+    ports:
+      - "5433:5432"
+    volumes:
+      - microworld-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U microworld -d microworld"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  smallworld-backend:
+    build: .
+    container_name: smallworld-backend-db
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8787:8787"
+    environment:
+      SMALLWORLD_BACKEND_HOST: 0.0.0.0
+      SMALLWORLD_BACKEND_PORT: 8787
+      SMALLWORLD_CORS_ORIGIN: "*"
+      # 容器内通过服务名 db 访问 Postgres;本地明文测试关掉 SSL。
+      SMALLWORLD_DATABASE_URL: postgres://microworld:microworld@db:5432/microworld
+      SMALLWORLD_DATABASE_SSL: disable
+    restart: unless-stopped
+
+volumes:
+  microworld-db-data:

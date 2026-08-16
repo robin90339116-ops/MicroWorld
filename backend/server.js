@@ -16,6 +16,7 @@ const nfcProofRoutes = require('./src/modules/nfc-proof/nfc-proof.routes');
 const ratingRoutes = require('./src/modules/review-rating/rating.routes');
 const merchantTapRoutes = require('./src/modules/merchant-tap/merchant-tap.routes');
 const safetyRoutes = require('./src/modules/safety/safety.routes');
+const { createStore } = require('./src/shared/store');
 
 const PORT = Number(process.env.SMALLWORLD_BACKEND_PORT || 8787);
 const HOST = process.env.SMALLWORLD_BACKEND_HOST || '0.0.0.0';
@@ -471,15 +472,19 @@ const seed = {
   }
 };
 
-function ensureData() {
-  if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(seed, null, 2));
-  }
-}
+// 可插拔持久层:未配置 SMALLWORLD_DATABASE_URL 时用本地 JSON 文件;
+// 配置后自动切换到华为云 GaussDB/RDS(见 src/shared/store.js)。
+const store = createStore({
+  databaseUrl: process.env.SMALLWORLD_DATABASE_URL,
+  dataFile: DATA_FILE,
+  seed
+});
 
 function readData() {
-  ensureData();
-  const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  let data = store.readRaw();
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    data = JSON.parse(JSON.stringify(seed));
+  }
   data.places = Array.isArray(data.places) ? data.places.map(place => {
     const exploreDefaults = EXPLORE_PLACE_DEFAULTS[place.id] || {};
     return {
@@ -544,7 +549,7 @@ function readData() {
 }
 
 function writeData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  store.writeRaw(data);
 }
 
 function send(res, status, body) {
@@ -575,18 +580,19 @@ function moduleStatus() {
     service: 'MicroWorld backend',
     version: SERVICE_VERSION,
     storage: {
-      mode: 'json-file',
-      dataFile: DATA_FILE
+      mode: store.kind,
+      dataFile: store.kind === 'json-file' ? DATA_FILE : undefined,
+      databaseConfigured: store.kind !== 'json-file'
     },
     cloudTarget: {
-      primary: 'Tencent Cloud',
-      ecosystem: 'Huawei Cloud / AppGallery Connect',
-      note: '当前后端以当前 WebView 前端为契约，仍使用 JSON 文件持久化；上云后迁移到 PostgreSQL/Redis/COS。'
+      primary: 'Huawei Cloud',
+      database: 'Huawei Cloud GaussDB(openGauss) / RDS for PostgreSQL',
+      note: '未配置 SMALLWORLD_DATABASE_URL 时用本地 JSON 文件持久化;配置后自动切换到华为云 GaussDB/RDS 存储登录注册与业务数据。'
     },
     frontendContract: {
-      source: 'entry/src/main/resources/rawfile/smallworld_prototype.html',
+      source: 'entry/src/main/ets/pages/Index.ets',
       bottomTabs: ['探索', '兴趣', '世界', '聊天', '我'],
-      note: '实景已合并进世界页；世界、AI 导游、兴趣 AI 助手后端按当前版本要求保持占位。'
+      note: '实景已合并进世界页；AI 导游、兴趣 AI 助手后端按当前版本要求保持占位。'
     },
     activeModules: [
       { key: 'explore', name: '探索地点、活动、评分与路线', status: 'active' },
@@ -596,6 +602,7 @@ function moduleStatus() {
       { key: 'auth', name: '登录注册与会话', status: 'active' },
       { key: 'place', name: '地点详情、活动比赛、排行榜与奖牌', status: 'active' },
       { key: 'placeRoom', name: '地点页公共聊天与分享', status: 'active' },
+      { key: 'world', name: '世界模块后端', status: 'active' },
       { key: 'nfcProof', name: '手机碰一碰 proof', status: 'active' },
       { key: 'reviewRating', name: '真实评价与五维评分', status: 'active' },
       { key: 'merchantTap', name: '商家碰一碰消费评价', status: 'active' },
@@ -603,7 +610,6 @@ function moduleStatus() {
     ],
     deferredModules: [
       { key: 'aiGuide', name: 'AI 线下导游', status: 'deferred', endpoint: '/api/explore/ai-route' },
-      { key: 'world', name: '世界模块后端', status: 'deferred', endpoint: '/api/worlds' },
       { key: 'interestAi', name: '兴趣 AI 助手', status: 'deferred', endpoint: '/api/interests/ai-assistant' }
     ]
   };
@@ -611,12 +617,12 @@ function moduleStatus() {
 
 function frontendContract() {
   return {
-    source: 'entry/src/main/resources/rawfile/smallworld_prototype.html',
+    source: 'entry/src/main/ets/pages/Index.ets',
     appName: 'MicroWorld',
     bottomTabs: [
       { key: 'explore', label: '探索', backend: ['GET /api/explore/places', 'GET /api/places/:placeId', 'POST /api/explore/route-plan'] },
       { key: 'interest', label: '兴趣', backend: ['GET /api/interests', 'GET /api/interests/:interestId', 'GET /api/clubs/:clubId'] },
-      { key: 'world', label: '世界', backend: ['DEFERRED /api/worlds...'] },
+      { key: 'world', label: '世界', backend: ['GET /api/worlds', 'POST /api/worlds', 'POST /api/worlds/:worldId/assets'] },
       { key: 'chat', label: '聊天', backend: ['GET /api/social/home', 'GET/POST /api/chats/:chatId/messages'] },
       { key: 'me', label: '我', backend: ['GET /api/me/profile', 'GET /api/me/:feature', 'POST /api/me/settings'] }
     ],
@@ -635,7 +641,6 @@ function frontendContract() {
     ],
     deferred: [
       { key: 'aiGuide', endpoint: '/api/explore/ai-route' },
-      { key: 'world', endpoint: '/api/worlds...' },
       { key: 'interestAi', endpoint: '/api/interests/ai-assistant' }
     ]
   };
@@ -1382,7 +1387,7 @@ const server = http.createServer(async (req, res) => {
         service: 'MicroWorld backend',
         version: SERVICE_VERSION,
         uptimeSeconds: Math.round(process.uptime()),
-        dataMode: 'json-file'
+        dataMode: store.kind
       });
       return;
     }
@@ -1407,10 +1412,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname === '/api/worlds' || url.pathname.startsWith('/api/worlds/')) {
-      send(res, 501, deferredFeature('WORLD_MODULE', '世界模块后端本版本暂不接入，前端先使用本地展示与交互'));
-      return;
-    }
 
     if (await exploreRoutes.handleExploreRoutes({ req, res, url, send, readData, readBody })) {
       return;
@@ -1836,18 +1837,35 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-function startServer() {
+async function startServer() {
+  await store.init();
   server.listen(PORT, HOST, () => {
     console.log(`MicroWorld backend listening on http://${HOST}:${PORT}`);
-    console.log(`MicroWorld data file: ${DATA_FILE}`);
+    console.log(`MicroWorld storage: ${store.kind}${store.kind === 'json-file' ? ` (${DATA_FILE})` : ''}`);
   });
 }
 
 if (require.main === module) {
-  startServer();
+  startServer().catch(error => {
+    console.error(`MicroWorld backend 启动失败: ${error.message}`);
+    process.exit(1);
+  });
 
-  const shutdown = signal => {
+  let shuttingDown = false;
+  const shutdown = async signal => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     console.log(`MicroWorld backend received ${signal}, shutting down...`);
+    // 兜底:即使 flush/close 卡住也强制退出。
+    setTimeout(() => process.exit(0), 4000).unref();
+    try {
+      await store.flush();
+      await store.close();
+    } catch (error) {
+      console.error(`MicroWorld backend 关闭时落库失败: ${error.message}`);
+    }
     server.close(() => {
       process.exit(0);
     });

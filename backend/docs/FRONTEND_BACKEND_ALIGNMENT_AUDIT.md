@@ -1,15 +1,12 @@
-# SmallWorld 当前前端与后端对齐检查
+# MicroWorld 当前前端与后端对齐检查
 
 检查日期：2026-07-20
 
 ## 结论
 
-当前前端真正的入口是：
+当前前端唯一入口是 `entry/src/main/ets/pages/Index.ets`，页面、底栏、交互和 API 调用均使用 HarmonyOS ArkUI 原生实现。
 
-- `entry/src/main/ets/pages/Index.ets`：HarmonyOS WebView 外壳。
-- `entry/src/main/resources/rawfile/smallworld_prototype.html`：实际 App 页面、底栏、交互和 API 调用。
-
-因此后端模块必须按 `smallworld_prototype.html` 的页面和接口来对齐，而不是按旧版“探索/实景/世界/聊天/我”拆法对齐。现在底栏已经变成：
+后端模块必须按该 ArkUI 页面和接口契约对齐。当前底栏为：
 
 ```text
 探索 / 兴趣 / 世界 / 聊天 / 我
@@ -101,14 +98,14 @@
 
 当前状态：
 
-- 前端是本地交互和展示壳。
-- 后端 `/api/worlds...` 按你的要求暂不实现，统一返回 501。
-- MR/AR 作为补充显示方式目前只应保留接口计划，不进入后端实现。
+- 前端保持现有 ArkUI 展示与交互。
+- 后端 `/api/worlds...` 已开放基础列表、创建、物件编辑、发布、协作者和访问接口。
+- MR/AR 作为补充显示方式目前只保留接口计划，不新增当前前端入口。
 
 重要边界：
 
 - “实景”已经合并进世界页。
-- 当前版本不把世界模块算作后端已完成模块。
+- 当前版本把世界模块的基础后端纳入已接入范围；AI 线下导游与兴趣 AI 助手仍暂缓。
 
 ### 5. 聊天
 
@@ -191,12 +188,11 @@
 这些不是遗漏，是当前版本按你的要求先不写：
 
 - AI 线下导游后端：`POST /api/explore/ai-route`
-- 世界模块后端：`/api/worlds...`
 - 兴趣 AI 助手后端：`POST /api/interests/ai-assistant`
 
 ## 本次检查后的代码调整
 
-- 模块状态按当前底栏和 WebView 前端重新描述。
+- 模块状态按当前底栏和 ArkUI 原生前端重新描述。
 - 新增 `GET /api/system/frontend-contract`。
 - 聊天朋友数据补齐 `source`、`place`、`momentTime`、`momentText`、`score`、`rank`。
 - 我的页面后端补齐菜单、奖杯、动态、俱乐部、日程、兴趣记录、NFC 信息和设置行。

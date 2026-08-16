@@ -72,8 +72,13 @@ function enrichPlace(data, place, origin) {
 }
 
 function originFromSearchParams(searchParams) {
-  const latitude = Number(searchParams && searchParams.get('latitude'));
-  const longitude = Number(searchParams && searchParams.get('longitude'));
+  const latitudeValue = searchParams && searchParams.get('latitude');
+  const longitudeValue = searchParams && searchParams.get('longitude');
+  if (latitudeValue === null || latitudeValue === '' || longitudeValue === null || longitudeValue === '') {
+    return null;
+  }
+  const latitude = Number(latitudeValue);
+  const longitude = Number(longitudeValue);
   return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
 }
 

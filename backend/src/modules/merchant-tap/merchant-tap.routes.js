@@ -77,6 +77,19 @@ async function handleMerchantTapRoutes({
     return true;
   }
 
+  const merchantPlaceReviewMatch = url.pathname.match(/^\/api\/merchant\/taps\/([^/]+)\/place-reviews$/);
+  if (req.method === 'POST' && merchantPlaceReviewMatch) {
+    const data = readData();
+    const auth = authenticate(data, req);
+    if (!auth) {
+      send(res, 401, { error: 'AUTH_REQUIRED', message: '请先登录后再评价地点' });
+      return true;
+    }
+    const result = merchantTapService.merchantPlaceReview(data, auth.account, merchantPlaceReviewMatch[1], await readBody(req), options);
+    send(res, result.status, result.body);
+    return true;
+  }
+
   return false;
 }
 

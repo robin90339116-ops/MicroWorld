@@ -1,5 +1,9 @@
 const exploreService = require('../explore/explore.service');
 const ratingService = require('../review-rating/rating.service');
+const { createChainAnchor } = require('../../shared/chainAnchor');
+
+// 数字藏品上链锚定层:默认 certificate(自签凭证);配置 SMALLWORLD_CHAIN_PROVIDER=huawei-bcs 后走华为云 BCS 联盟链。
+const chainAnchor = createChainAnchor();
 
 const PLACE_LEADERBOARD_SEEDS = {
   library: [
@@ -441,9 +445,11 @@ function claimPlaceMedal(data, place, account, medalId, options = {}) {
     medalId: medal.id,
     tokenId,
     editionNumber: serial,
-    chainStatus: 'digital-certificate',
     earnedAt: new Date().toISOString()
   };
+  // 由上链锚定层决定 chainStatus / chainProvider / txHash:
+  // certificate 模式=数字藏品凭证(现状);huawei-bcs 模式=标记待上链,再异步铸造。
+  chainAnchor.stampNewCollectible(record);
   data.userMedals = Array.isArray(data.userMedals) ? data.userMedals : [];
   data.userMedals.push(record);
   if (typeof options.persist === 'function') {
@@ -486,6 +492,10 @@ function getCollectible(data, tokenId) {
         { traitType: '版本编号', value: record.editionNumber }
       ],
       chainStatus: record.chainStatus,
+      chainProvider: record.chainProvider || 'certificate',
+      chainName: record.chainName || '',
+      txHash: record.txHash || '',
+      onChain: record.chainStatus === 'on-chain',
       issuedAt: record.earnedAt
     }
   };

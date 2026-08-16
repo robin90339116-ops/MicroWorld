@@ -1,0 +1,17 @@
+{
+  "cardEmulation": {
+    "type": [
+      "host"
+    ],
+    "services": [
+      {
+        "name": "com.smallworld.app.EntryAbility",
+        "description": "$string:module_desc",
+        "type": "hce",
+        "aid-filters": [
+          "F0534D414C4C574F524C44"
+        ]
+      }
+    ]
+  }
+}

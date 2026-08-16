@@ -11,7 +11,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "SMALLWORLD_BACKEND_HOST=0.0.0.0 SMALLWORLD_BACKEND_PORT=8787 node server.js",
-    "smoke": "node tests/smoke.js"
+    "smoke": "node tests/smoke.js",
+    "smoke:db": "node tests/smoke.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
   },
   "keywords": [
     "smallworld",

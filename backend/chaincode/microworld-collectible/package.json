@@ -1,0 +1,17 @@
+{
+  "name": "microworld-collectible",
+  "version": "0.1.0",
+  "description": "MicroWorld 数字藏品链码(华为云 BCS / Hyperledger Fabric):碰一碰相遇藏品与地标奖牌上链发行。",
+  "main": "index.js",
+  "engines": {
+    "node": ">=16"
+  },
+  "scripts": {
+    "start": "fabric-chaincode-node start"
+  },
+  "dependencies": {
+    "fabric-contract-api": "^2.5.4",
+    "fabric-shim": "^2.5.4"
+  },
+  "license": "UNLICENSED"
+}

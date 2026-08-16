@@ -93,6 +93,13 @@ async function main() {
     assert(firstPlace.socialMetrics && firstPlace.socialMetrics.trustLabel, 'place social metrics missing');
     assert(firstPlace.routeEntrypoints && firstPlace.routeEntrypoints.routePlan === true, 'place route entrypoints missing');
 
+    const placesWithoutOrigin = await request('/api/explore/places');
+    assert(placesWithoutOrigin.response.ok, 'explore places without origin failed');
+    assert(
+      placesWithoutOrigin.body.places.every(place => Number(place.distanceMeters || 0) < 1000000),
+      'missing coordinates must not be interpreted as latitude/longitude zero'
+    );
+
     const email = `smoke-${Date.now()}@smallworld.local`;
     const register = await request('/api/auth/register', {
       method: 'POST',
@@ -156,6 +163,7 @@ async function main() {
     assert(Array.isArray(meProfile.body.settingsRows) && meProfile.body.settingsRows.length >= 5, 'me settings rows missing');
     assert(Array.isArray(meProfile.body.interestStats) && meProfile.body.interestStats.length > 0, 'me interest stats missing');
     assert(meProfile.body.privacyGuardrails && meProfile.body.privacyGuardrails.invisibleSupported === true, 'me profile privacy guardrails missing');
+    assert(meProfile.body.capabilities && meProfile.body.capabilities.worldBackend === true, 'me profile should report the active world backend');
 
     const settingsSave = await request('/api/me/settings', {
       method: 'POST',
@@ -177,6 +185,7 @@ async function main() {
       ['/api/me/schedule', 'schedule'],
       ['/api/me/interest-data', 'interests'],
       ['/api/me/nfc', 'exchanges'],
+      ['/api/me/worlds', 'worlds'],
       ['/api/me/settings', 'settings'],
       ['/api/me/meTrophies', 'trophies']
     ];
@@ -188,12 +197,6 @@ async function main() {
       assert(feature.body.contract === 'SmallWorld Profile v1', `${pathname} contract marker missing`);
       assert(feature.body[field] !== undefined, `${pathname} missing ${field}`);
     }
-
-    const deferredWorldProfile = await request('/api/me/worlds', {
-      headers: authHeaders(token)
-    });
-    assert(deferredWorldProfile.response.ok, 'me worlds placeholder endpoint failed');
-    assert(deferredWorldProfile.body.status === 'WORLD_BACKEND_DEFERRED', 'me worlds should remain deferred');
 
     const social = await request('/api/social/home', {
       headers: authHeaders(token)
@@ -545,6 +548,13 @@ async function main() {
     assert(confirmNfc.response.status === 201, `nfc confirm failed: ${JSON.stringify(confirmNfc.body)}`);
     assert(confirmNfc.body.contract === 'SmallWorld NFC Proof v1', 'nfc confirm contract marker missing');
     assert(confirmNfc.body.proofId, 'nfc confirm missing proofId');
+    assert(confirmNfc.body.reward && confirmNfc.body.reward.affinity && confirmNfc.body.reward.affinity.added === 6, 'nfc confirm should award affinity (好感度)');
+    assert(confirmNfc.body.reward.points && confirmNfc.body.reward.points.awarded === 6, 'nfc confirm should award points (积分)');
+    assert(Number.isFinite(confirmNfc.body.timesMet) && confirmNfc.body.timesMet >= 1, 'nfc confirm should report timesMet (第N次碰面)');
+    assert(typeof confirmNfc.body.reward.badgeDropped === 'boolean', 'nfc confirm should report 3D badge lucky-drop flag');
+    if (confirmNfc.body.reward.badgeDropped) {
+      assert(confirmNfc.body.reward.badge && confirmNfc.body.reward.badge.tokenId, 'dropped 3D badge should carry a tokenId');
+    }
     assert(confirmNfc.body.guardrails && confirmNfc.body.guardrails.transport === 'iso_dep_apdu', 'nfc confirm transport guardrail missing');
 
     const nfcStatus = await request(`/api/nfc/sessions/${encodeURIComponent(nfcSession.body.sessionId)}`, {
@@ -655,6 +665,44 @@ async function main() {
     assert(merchantItemReview.response.status === 201, `merchant item review failed: ${JSON.stringify(merchantItemReview.body)}`);
     assert(merchantItemReview.body.review && merchantItemReview.body.review.stars === 5, 'merchant item review body mismatch');
 
+    // 评价地点(设计 p2b-rate):打卡后可评价,完成即发放商家纪念徽章 + 积分。
+    const merchantPlaceReview = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/place-reviews`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ stars: 5, tags: ['环境好', '咖啡赞', '适合独处'], comment: 'smoke 到店评价' })
+    });
+    assert(merchantPlaceReview.response.status === 201, `merchant place review failed: ${JSON.stringify(merchantPlaceReview.body)}`);
+    assert(merchantPlaceReview.body.reward && merchantPlaceReview.body.reward.medal && merchantPlaceReview.body.reward.medal.tokenId, 'merchant place review should grant a commemorative medal');
+    assert(merchantPlaceReview.body.reward.medal.chainStatus, 'merchant medal should carry a chain status');
+    assert(merchantPlaceReview.body.reward.points && merchantPlaceReview.body.reward.points.awarded === 5, 'merchant place review should award points');
+
+    const duplicatePlaceReview = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/place-reviews`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ stars: 4 })
+    });
+    assert(duplicatePlaceReview.response.status === 409, 'duplicate merchant place review should be rejected');
+
+    // 门槛校验:未打卡不能评价地点、未支付不能评价物品。
+    const gateTap = await request('/api/merchant/taps', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ placeId: 'coffee', deviceId: 'consumer-phone-2', merchantDeviceId: 'market-lane-terminal', merchantId: 'merchant-market-lane' })
+    });
+    assert(gateTap.response.status === 201, `gate tap failed: ${JSON.stringify(gateTap.body)}`);
+    const earlyPlaceReview = await request(`/api/merchant/taps/${encodeURIComponent(gateTap.body.tap.id)}/place-reviews`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ stars: 5 })
+    });
+    assert(earlyPlaceReview.response.status === 403, 'place review before checkin should be rejected');
+    const earlyItemReview = await request(`/api/merchant/taps/${encodeURIComponent(gateTap.body.tap.id)}/item-reviews`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ itemName: 'x', stars: 5 })
+    });
+    assert(earlyItemReview.response.status === 403, 'item review before payment should be rejected');
+
     const merchantTapList = await request('/api/merchant/taps', {
       headers: authHeaders(token)
     });
@@ -671,7 +719,9 @@ async function main() {
     const worlds = await request('/api/worlds', {
       headers: authHeaders(token)
     });
-    assert(worlds.response.status === 501, 'deferred worlds endpoint should return 501');
+    assert(worlds.response.ok, `worlds endpoint failed: ${JSON.stringify(worlds.body)}`);
+    assert(Array.isArray(worlds.body.worlds), 'worlds endpoint should return a list');
+    assert(Array.isArray(worlds.body.assetLibrary) && worlds.body.assetLibrary.length > 0, 'worlds asset library missing');
 
     console.log('SmallWorld backend smoke test passed.');
   } finally {

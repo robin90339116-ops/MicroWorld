@@ -1,13 +1,87 @@
+const { createChainAnchor } = require('../../shared/chainAnchor');
+
 const NFC_PROOF_CONTRACT = 'SmallWorld NFC Proof v1';
 const NFC_SESSION_TTL_MS = 2 * 60 * 1000;
 const NFC_PROOF_TTL_MS = 20 * 60 * 1000;
 const NFC_TRANSPORT = 'iso_dep_apdu';
+
+// 好友碰面 3D 纪念徽章走同一套数字藏品上链锚定层。
+const chainAnchor = createChainAnchor();
 
 function arrayOf(data, key) {
   if (!Array.isArray(data[key])) {
     data[key] = [];
   }
   return data[key];
+}
+
+// 碰面奖励:好感度 +、积分 +、第 N 次碰面,以及 3D 纪念徽章(幸运掉落)。
+// 对应设计的「好友碰面结果」页(NFT + 好感度 + 积分)。
+function awardMeetingReward(data, account, proof, options) {
+  const samePair = arrayOf(data, 'touchProofs').filter(item => {
+    return (item.initiatorUserId === proof.initiatorUserId && item.peerUserId === proof.peerUserId) ||
+      (item.initiatorUserId === proof.peerUserId && item.peerUserId === proof.initiatorUserId);
+  });
+  const timesMet = samePair.length; // 已包含当前这次(调用前已 push)
+  const alreadyFriends = timesMet > 1;
+
+  // 好感度(按用户对存储,双方共享)
+  if (!data.affinity || typeof data.affinity !== 'object' || Array.isArray(data.affinity)) {
+    data.affinity = {};
+  }
+  const pairKey = [proof.initiatorUserId, proof.peerUserId].sort().join('__');
+  const AFFINITY = 6;
+  const affinityTotal = Math.round(Number(data.affinity[pairKey] || 0)) + AFFINITY;
+  data.affinity[pairKey] = affinityTotal;
+
+  // 积分(给确认方)
+  if (!data.userPoints || typeof data.userPoints !== 'object' || Array.isArray(data.userPoints)) {
+    data.userPoints = {};
+  }
+  const POINTS = 6;
+  const pointsTotal = Math.round(Number(data.userPoints[account.id] || 0)) + POINTS;
+  data.userPoints[account.id] = pointsTotal;
+
+  // 3D 纪念徽章:幸运掉落(设计:碰面有几率获得,未中奖仅记录)。
+  // 用 proofId 派生的确定性伪随机,便于测试稳定。
+  const seedHex = String(proof.id).replace(/[^0-9a-f]/gi, '').slice(-4) || '0';
+  const dropped = (parseInt(seedHex, 16) % 10) < 7;
+  let badge = null;
+  if (dropped) {
+    const serial = arrayOf(data, 'friendMedals').length + 12;
+    const tokenId = `SW-MEET-${String(serial).padStart(3, '0')}`;
+    const medal = {
+      id: options.createId('friend_medal'),
+      userId: account.id,
+      peerUserId: proof.initiatorUserId === account.id ? proof.peerUserId : proof.initiatorUserId,
+      proofId: proof.id,
+      name: '3D 碰面纪念徽章',
+      rarity: 'R',
+      tokenId,
+      editionNumber: serial,
+      earnedAt: proof.createdAt
+    };
+    chainAnchor.stampNewCollectible(medal);
+    arrayOf(data, 'friendMedals').push(medal);
+    badge = {
+      name: medal.name,
+      rarity: medal.rarity,
+      tokenId,
+      editionNumber: serial,
+      chainStatus: medal.chainStatus,
+      standard: chainAnchor.standard
+    };
+  }
+
+  return {
+    firstMeeting: !alreadyFriends,
+    alreadyFriends,
+    timesMet,
+    affinity: { added: AFFINITY, total: affinityTotal },
+    points: { awarded: POINTS, total: pointsTotal },
+    badgeDropped: dropped,
+    badge
+  };
 }
 
 function guardrails() {
@@ -188,6 +262,7 @@ function confirmNfcSession(data, account, body, options) {
   delete session.touchToken;
 
   arrayOf(data, 'touchProofs').push(proof);
+  const reward = awardMeetingReward(data, account, proof, options);
   options.persist(data);
 
   return {
@@ -199,6 +274,9 @@ function confirmNfcSession(data, account, body, options) {
       sessionId: session.id,
       placeId: session.placeId,
       expiresAt: proof.expiresAt,
+      alreadyFriends: reward.alreadyFriends,
+      timesMet: reward.timesMet,
+      reward,
       proof,
       guardrails: guardrails()
     }

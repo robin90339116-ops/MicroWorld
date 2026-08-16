@@ -2,13 +2,12 @@
 
 这个后端包含用户注册登录、登录态、线下社交身份、探索地点、地点公共空间、兴趣检索、俱乐部、朋友聊天、个人中心、商家碰一碰评价、安全审计，以及基于两部手机 NFC ISO-DEP/APDU 碰触的真实评价系统。
 
-当前已经进入“模块化后端 + 云部署”阶段。模块 0-12 已按当前前端契约完成第一轮拆分：Auth、探索、地点、地点公共空间、兴趣/俱乐部、朋友聊天、个人中心、NFC Proof、Review Rating、Merchant Tap 和 Safety 已进入 `src/modules`。后台会继续按模块迁出。
+当前已经进入“模块化后端 + 云部署”阶段。模块 0-12 已按当前前端契约完成第一轮拆分：Auth、探索、地点、地点公共空间、兴趣/俱乐部、朋友聊天、个人中心、世界、NFC Proof、Review Rating、Merchant Tap 和 Safety 已接入。
 
-本轮完成范围：除 AI 导游、世界模块、兴趣 AI 助手后端之外，其余演示所需后端链路已经接通。以下暂缓模块统一返回 `501`，避免前端误判为已完成：
+本轮完成范围：当前前端已有入口对应的认证、探索、地点、地点广场、兴趣、聊天、个人中心、世界、NFC/评价、安全与商家碰一碰后端链路已经接通。以下暂缓模块统一返回 `501`，避免前端误判为已完成：
 
 - `POST /api/explore/ai-route`
 - `POST /api/interests/ai-assistant`
-- `GET/POST /api/worlds...`
 
 ## 启动
 
@@ -26,7 +25,7 @@ npm start
 - `SMALLWORLD_DATA_FILE`：JSON 数据文件路径，适合测试时隔离数据。
 - `SMALLWORLD_BACKEND_VERSION`：健康检查和模块状态返回的后端版本。
 - `SMALLWORLD_CORS_ORIGIN`：CORS 来源，开发环境可用 `*`，生产环境建议配置为明确来源。
-世界模块与 AI 图像生成后端本轮按要求暂不接入，因此图像生成相关环境变量不需要配置。
+世界模块已开放基础列表、创建、物件和访问接口。AI 图像生成供应商仍为可选配置；未配置时会返回本地可复现的视觉占位数据。
 
 模块状态：
 
@@ -54,17 +53,15 @@ cd backend
 docker compose up --build
 ```
 
-真机或模拟器调试时，手机访问 Mac 上的服务通常不能只依赖 `127.0.0.1` 或某一个局域网 IP。当前 WebView 前端会自动尝试：
+真机或模拟器调试时，手机访问 Mac 上的服务通常不能只依赖 `127.0.0.1` 或某一个局域网 IP。当前 ArkUI 前端会自动尝试：
 
 ```text
-localStorage.smallworld.backend.baseUrl
-window.SMALLWORLD_BACKEND_URL
 http://127.0.0.1:8787
 http://localhost:8787
 http://10.0.2.2:8787
 ```
 
-如果模拟器无法访问 Mac 的 `127.0.0.1`，可以使用 DevEco/hdc 端口转发或把 `localStorage.smallworld.backend.baseUrl` 设置为可访问的后端地址。后端地址会被前端记住，换 Wi-Fi 后只需要服务仍可被当前候选地址访问。
+如果模拟器无法访问 Mac 的 `127.0.0.1`，可以使用 DevEco/hdc 端口转发；真机运行时需要把候选地址配置为 Mac 当前局域网地址或云端 HTTPS 地址。
 
 ## 用户认证
 
@@ -92,7 +89,7 @@ Authorization: Bearer <登录返回的 token>
 
 ## 当前前端对齐
 
-后端以 `entry/src/main/resources/rawfile/smallworld_prototype.html` 作为当前前端契约。底部导航为：
+后端以 `entry/src/main/ets/pages/Index.ets` 作为当前 ArkUI 前端契约。底部导航为：
 
 ```text
 探索 / 兴趣 / 世界 / 聊天 / 我
@@ -131,7 +128,7 @@ Authorization: Bearer <登录返回的 token>
 - `GET /api/me/nfc`：碰一碰记录。
 - `GET /api/me/settings`：隐私与通知设置。
 - `POST /api/me/settings`：保存隐私与通知设置。
-- `GET /api/me/worlds`：本轮返回 `WORLD_BACKEND_DEFERRED`，世界模块后端暂不继续补写。
+- `GET /api/me/worlds`：返回当前账号可见的个人虚拟世界摘要。
 
 ## 安全与隐私审计
 
@@ -237,6 +234,5 @@ X-Place-Room-Token: <roomToken>
 
 - `POST /api/explore/ai-route`：AI 线下导游。
 - `POST /api/interests/ai-assistant`：兴趣 AI 助手。
-- `GET/POST /api/worlds...`：世界模块后端。
 
-注意：地标排行榜和奖牌模块里仍保留“小世界共建贡献”的数据字段，这是为了前端展示和未来迁移兼容；当前版本不会开放世界模块的真实写入接口。
+世界模块后端已开放基础列表、创建、物件编辑、发布、协作者和访问接口；AI 图像生成供应商未配置时会回落到本地占位视觉。

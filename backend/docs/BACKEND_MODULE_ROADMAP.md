@@ -4,7 +4,7 @@
 
 0. 基础与部署底座：已完成第一轮。
 1. Auth：注册、登录、会话、密码、设备。已完成第一轮拆分，见 `docs/MODULE_1_AUTH.md`。
-2. Frontend Contract：以当前 WebView 前端为准，锁定底栏、页面、字段和暂缓模块。已完成第一轮检查，见 `docs/FRONTEND_BACKEND_ALIGNMENT_AUDIT.md`。
+2. Frontend Contract：以当前 ArkUI 原生前端为准，锁定底栏、页面、字段和暂缓模块。已完成第一轮检查，见 `docs/FRONTEND_BACKEND_ALIGNMENT_AUDIT.md`。
 3. Explore：探索首页、地点标记、活动推荐、搜索筛选、评分摘要展示、路线。已完成第一轮拆分，见 `docs/MODULE_3_EXPLORE.md`。
 4. Place：地点详情、活动比赛、排行榜、奖牌。已完成第一轮拆分，见 `docs/MODULE_4_PLACE.md`。
 5. Place Room：地点页公共聊天、分享、房间令牌，保证公共聊天只能从地点页进入。已完成第一轮拆分，见 `docs/MODULE_5_PLACE_ROOM.md`。
@@ -20,7 +20,6 @@
 暂不做：
 
 - AI 线下导游。
-- 世界模块后端。
 - 兴趣 AI 助手。
 
 ## 每个模块的完成标准
@@ -73,7 +72,6 @@ backend/
 
 ```text
 entry/src/main/ets/pages/Index.ets
-entry/src/main/resources/rawfile/smallworld_prototype.html
 ```
 
 当前底部导航：

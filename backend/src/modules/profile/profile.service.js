@@ -174,6 +174,31 @@ function nfcExchangesFor(data, account) {
     .reverse();
 }
 
+function profileWorldsFor(data, account) {
+  return arrayOf(data, 'worlds')
+    .filter(world => {
+      const collaborators = Array.isArray(world.collaborators) ? world.collaborators : [];
+      return world.ownerId === account.id || collaborators.some(member => {
+        return member.userId === account.id && member.status === 'active';
+      });
+    })
+    .map(world => {
+      const place = arrayOf(data, 'places').find(item => item.id === world.placeId) || null;
+      return {
+        id: world.id,
+        name: world.name,
+        placeId: world.placeId,
+        placeName: place ? (place.shortName || place.name) : world.placeId,
+        status: world.status || 'draft',
+        visibility: world.visibility || 'private',
+        description: world.description || '',
+        visitCount: Number(world.visitCount || 0),
+        collaboratorCount: collaborators.filter(member => member.status === 'active').length,
+        objectCount: Array.isArray(world.objects) ? world.objects.length : 0
+      };
+    });
+}
+
 function profileHome(data, account) {
   const settings = profileSettingsFor(data, account);
   const users = objectOf(data, 'users');
@@ -220,9 +245,13 @@ function profileHome(data, account) {
     settingsRows: PROFILE_SETTINGS_ROWS,
     editableSettings: SETTING_DESCRIPTIONS,
     entries: PROFILE_MENU.map(item => item.label).concat(['设置']),
-    deferred: {
+    capabilities: {
       worldBackend: true,
-      message: '个人虚拟世界页面当前仍使用前端本地展示，/api/worlds 后端按计划暂缓。'
+      worldAiImageProviderConfigured: Boolean(
+        String(process.env.SMALLWORLD_IMAGE_API_URL || '').trim() &&
+        String(process.env.SMALLWORLD_IMAGE_API_KEY || '').trim()
+      ),
+      message: '个人虚拟世界已连接 /api/worlds；未配置图像供应商时使用程序化预览物件。'
     }
   };
 }
@@ -287,8 +316,7 @@ function profileFeature(data, account, feature) {
     return {
       contract: PROFILE_CONTRACT,
       title: '个人虚拟世界',
-      status: 'WORLD_BACKEND_DEFERRED',
-      message: '世界模块后端本轮按要求暂不继续补写'
+      worlds: profileWorldsFor(data, account)
     };
   }
 
@@ -311,6 +339,7 @@ module.exports = {
   nfcExchangesFor,
   profileClubsFor,
   profileFeature,
+  profileWorldsFor,
   profileHome,
   profileInterestStats,
   profileMomentsFor,
