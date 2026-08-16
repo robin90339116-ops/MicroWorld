@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "com.smallworld.app",
+    "bundleName": "com.microworld.app",
     "vendor": "MicroWorld",
     "versionCode": 1000000,
     "versionName": "0.1.0",

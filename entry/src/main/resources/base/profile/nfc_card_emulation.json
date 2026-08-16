@@ -5,7 +5,7 @@
     ],
     "services": [
       {
-        "name": "com.smallworld.app.EntryAbility",
+        "name": "com.microworld.app.EntryAbility",
         "description": "$string:module_desc",
         "type": "hce",
         "aid-filters": [
