@@ -39,13 +39,14 @@ async function handleSocialChatRoutes({
   }
 
   if (req.method === 'POST' && chatMessageMatch) {
+    const body = await readBody(req);
     const data = readData();
     const auth = authenticate(data, req);
     if (!auth) {
       send(res, 401, { error: 'AUTH_REQUIRED', message: '请先登录后再发送消息' });
       return true;
     }
-    const result = socialChatService.createChatMessage(data, auth.account, chatMessageMatch[1], await readBody(req), options);
+    const result = socialChatService.createChatMessage(data, auth.account, chatMessageMatch[1], body, options);
     send(res, result.status, result.body);
     return true;
   }
@@ -108,7 +109,7 @@ async function handleSocialChatRoutes({
       send(res, 401, { error: 'AUTH_REQUIRED', message: '请先登录后再同步动态' });
       return true;
     }
-    send(res, 200, socialChatService.listMoments(data));
+    send(res, 200, socialChatService.listMoments(data, auth.account));
     return true;
   }
 

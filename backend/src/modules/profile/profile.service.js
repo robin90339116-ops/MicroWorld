@@ -114,7 +114,7 @@ function profileMomentsFor(data, account) {
   const displayName = account.displayName || '城市书签';
   const avatar = displayName.slice(0, 1);
   const moments = arrayOf(data, 'myMoments').filter(moment => {
-    return moment.authorId === account.id || moment.authorId === 'me';
+    return moment.authorId === account.id;
   });
 
   return moments.map(moment => ({
@@ -206,7 +206,7 @@ function profileHome(data, account) {
   const myMoments = profileMomentsFor(data, account);
   const displayName = account.displayName || '城市书签';
   const nfcExchanges = nfcExchangesFor(data, account);
-  const friends = arrayOf(data, 'friends');
+  const friends = arrayOf(data, 'friends').filter(friend => friend.ownerId === account.id);
 
   return {
     contract: PROFILE_CONTRACT,
@@ -214,7 +214,7 @@ function profileHome(data, account) {
     display: {
       name: displayName,
       avatar: displayName.slice(0, 1),
-      score: Number(userStats.score || 328),
+      score: Number(userStats.score || 0),
       subtitle: (account.interests || []).join(' / ') || '读书 / 咖啡 / 城市探索'
     },
     settings,

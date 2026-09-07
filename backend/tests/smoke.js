@@ -204,8 +204,9 @@ async function main() {
     assert(social.response.ok, 'social home endpoint failed');
     assert(social.body.contract === 'SmallWorld Social Chat v1', 'social chat contract marker missing');
     assert(social.body.guardrails && social.body.guardrails.groupsEnabled === false, 'social chat should disable groups');
-    assert(Array.isArray(social.body.friends) && social.body.friends.length > 0, 'social friends missing');
-    assert(Array.isArray(social.body.chats) && social.body.chats.length > 0, 'social chats missing');
+    assert(Array.isArray(social.body.friends) && social.body.friends.length === 0, 'new accounts must not inherit demo friends');
+    assert(Array.isArray(social.body.chats) && social.body.chats.length === 0, 'new accounts must not inherit demo chats');
+    assert(social.body.chatMessages.length === 0, 'new accounts must not read demo or other users messages');
     assert(social.body.friends.every(friend => friend.place && friend.momentText && Number.isFinite(friend.score)), 'friend display contract fields missing');
     assert(social.body.chats.every(chat => chat.isGroup === false && chat.type === 'direct'), 'social chats must be one-to-one only');
 
@@ -215,18 +216,16 @@ async function main() {
     assert(friendsList.response.ok, 'friends list endpoint failed');
     assert(friendsList.body.guardrails && friendsList.body.guardrails.relationshipRequired === true, 'friends guardrails missing');
 
-    const friendDetail = await request(`/api/friends/${encodeURIComponent(social.body.friends[0].id)}`, {
+    const friendDetail = await request('/api/friends/photo', {
       headers: authHeaders(token)
     });
-    assert(friendDetail.response.ok, 'friend detail endpoint failed');
-    assert(friendDetail.body.friend && friendDetail.body.friend.relationshipVerified === true, 'friend detail relationship marker missing');
+    assert(friendDetail.response.status === 404, 'unowned friend must not be visible');
 
-    const startChat = await request(`/api/friends/${encodeURIComponent(social.body.friends[0].id)}/chat`, {
+    const startChat = await request('/api/friends/photo/chat', {
       method: 'POST',
       headers: authHeaders(token)
     });
-    assert(startChat.response.ok, 'start friend chat endpoint failed');
-    assert(startChat.body.chat && startChat.body.chat.isGroup === false, 'started chat should be direct');
+    assert(startChat.response.status === 404, 'unowned friend cannot start a conversation');
 
     const chatsList = await request('/api/chats', {
       headers: authHeaders(token)
@@ -234,22 +233,18 @@ async function main() {
     assert(chatsList.response.ok, 'chat list endpoint failed');
     assert(chatsList.body.chats.every(chat => chat.isGroup === false), 'chat list should not contain groups');
 
-    const chatId = social.body.chats[0].id;
+    const chatId = 'chat-photo';
     const messages = await request(`/api/chats/${encodeURIComponent(chatId)}/messages`, {
       headers: authHeaders(token)
     });
-    assert(messages.response.ok, 'chat messages endpoint failed');
-    assert(messages.body.guardrails && messages.body.guardrails.chatType === 'one-to-one', 'chat messages guardrails missing');
-    assert(Array.isArray(messages.body.messages) && messages.body.messages.length > 0, 'chat messages missing');
+    assert(messages.response.status === 404, 'unowned chat history must be rejected');
 
     const sendMessage = await request(`/api/chats/${encodeURIComponent(chatId)}/messages`, {
       method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify({ text: 'smoke test message' })
     });
-    assert(sendMessage.response.status === 201, `send chat message failed: ${JSON.stringify(sendMessage.body)}`);
-    assert(sendMessage.body.chatMessage && sendMessage.body.chatMessage.text === 'smoke test message', 'sent chat message body mismatch');
-    assert(sendMessage.body.chat && sendMessage.body.chat.isGroup === false, 'sent chat should remain direct');
+    assert(sendMessage.response.status === 404, 'unowned chat send must be rejected');
 
     const moments = await request('/api/social/moments', {
       headers: authHeaders(token)
@@ -275,8 +270,7 @@ async function main() {
       method: 'POST',
       headers: authHeaders(token)
     });
-    assert(connectionDecision.response.ok, 'connection decline endpoint failed');
-    assert(connectionDecision.body.guardrails && connectionDecision.body.guardrails.groupsEnabled === false, 'connection guardrails missing');
+    assert(connectionDecision.response.status === 404, 'unowned connection request cannot be changed');
 
     const safetyHome = await request('/api/safety/home', {
       headers: authHeaders(token)

@@ -3,6 +3,14 @@ import NfcPeerManager from '../utils/NfcPeerManager';
 import { NfcHostPayload, NfcPeerPayload } from '../utils/NfcPeerManager';
 import { MapComponent, mapCommon, map } from '@kit.MapKit';
 import { AsyncCallback, BusinessError } from '@kit.BasicServicesKit';
+import SessionVault from '../utils/SessionVault';
+import util from '@ohos.util';
+
+interface ChatMessageItem {
+  id: string;
+  text: string;
+  mine: boolean;
+}
 
 interface MapPoint {
   latitude: number;
@@ -121,6 +129,7 @@ interface PlaceRoomOpenBody {
 
 interface MessageBody {
   text: string;
+  clientMessageId?: string;
 }
 
 interface WorldCreateBody {
@@ -211,7 +220,6 @@ const API_BASE_CANDIDATES: string[] = [
   'http://localhost:8787',
   'http://10.0.2.2:8787'
 ];
-const DEVICE_ID: string = 'microworld-harmony-demo';
 const DEMO_LATITUDE: string = '-37.8136';
 const DEMO_LONGITUDE: string = '144.9637';
 
@@ -313,7 +321,40 @@ struct Index {
   @State page: string = 'welcome';
   @State activeTab: string = 'explore';
   @State selectedFilter: string = '全部';
+  @State exploreQuery: string = '';
+  @State exploreLoading: boolean = false;
+  @State exploreError: string = '';
+  private exploreRequestId: number = 0;
+  @State socialError: string = '';
+  @State worldError: string = '';
+  @State identitySaving: boolean = false;
   @State selectedInterestCat: string = '全部';
+  @State interestCategories: string[] = ['全部'];
+  @State interestQuery: string = '';
+  @State interestLoading: boolean = false;
+  @State interestError: string = '';
+  private interestRequestId: number = 0;
+  @State chatMessages: ChatMessageItem[] = [];
+  @State chatError: string = '';
+  @State chatLoading: boolean = false;
+  @State sendingMessage: boolean = false;
+  @State authBusy: boolean = false;
+  @State startupReady: boolean = false;
+  @State currentUserId: string = '';
+  private chatTimer: number = -1;
+  private chatGeneration: number = 0;
+  private pendingMessageText: string = '';
+  private pendingMessageId: string = '';
+  private pendingMessageChat: string = '';
+  private sessionEpoch: number = 0;
+  @State worldNameDraft: string = '';
+  @State worldThemeDraft: string = 'memoryGarden';
+  @State worldVisibilityDraft: string = 'private';
+  @State worldPlaceIdDraft: string = '';
+  @State worldSaving: boolean = false;
+  @State worldFormError: string = '';
+  @State merchantPlaceComment: string = '';
+  @State merchantItemComment: string = '';
   @State selectedPlaceIndex: number = 0;
   @State selectedInterestIndex: number = 0;
   @State selectedWorldIndex: number = 0;
@@ -330,22 +371,18 @@ struct Index {
   @State messageDraft: string = '';
   @State apiBaseUrl: string = API_BASE_CANDIDATES[0];
   @State authToken: string = '';
-  @State places: PlaceItem[] = PLACES;
-  @State interests: InterestItem[] = INTERESTS;
-  @State worlds: WorldItem[] = WORLDS;
-  @State people: ChatPerson[] = PEOPLE;
-  @State moments: MomentItem[] = MOMENTS;
+  @State places: PlaceItem[] = [];
+  @State interests: InterestItem[] = [];
+  @State worlds: WorldItem[] = [];
+  @State people: ChatPerson[] = [];
+  @State moments: MomentItem[] = [];
   @State profileMenus: ProfileMenuItem[] = PROFILE_MENUS;
   @State profileName: string = '城市书签';
   @State profileSubtitle: string = '读书 / 咖啡 / 城市探索';
   @State profileIntentText: string = '社交意图：遇见同频的人';
-  @State profileStats: string[] = ['18', '9', '2', '14'];
+  @State profileStats: string[] = ['0', '0', '0', '0'];
   @State placeRoomToken: string = '';
-  @State placeRoomPosts: MomentItem[] = [
-    { author: '林间书页', place: 'State Library', text: '今天读书会节奏很好，可以只听不发言。', time: '刚刚' },
-    { author: '城市手帐', place: 'State Library', text: '我刚把一条书签故事放进记忆墙。', time: '3 分钟前' },
-    { author: '我', place: 'State Library', text: '这个地点比普通群聊轻松很多。', time: '刚刚' }
-  ];
+  @State placeRoomPosts: MomentItem[] = [];
   @State routeDistance: string = '';
   @State routeDuration: string = '14分';
   @State nfcRole: string = 'choose';
@@ -379,7 +416,7 @@ struct Index {
     abilityName: 'EntryAbility'
   });
   // 每台设备一个随机 ID:双机碰触时后端要求 host 与 reader 的设备号不同。
-  private nfcDeviceId: string = 'mw-' + Math.floor(Math.random() * 0xffffffff).toString(16);
+  private nfcDeviceId: string = '';
   // 华为原生 Map Kit:探索页真实地图。
   private mapController?: map.MapComponentController;
   private mapOptions: mapCommon.MapOptions = {
@@ -398,6 +435,16 @@ struct Index {
   };
 
   private go(next: string): void {
+    if (next === 'chatDetail' && this.people.length === 0) {
+      this.backendStatus = '尚未建立可用对话，请先完成双方连接';
+      return;
+    }
+    this.stopChatPolling();
+    if (next === 'chatDetail') {
+      this.chatMessages = [];
+      this.chatError = '';
+      this.chatTimer = setInterval(() => { this.loadChatMessages(); }, 4000);
+    }
     if (this.page === 'nfcTouch' && next !== 'nfcTouch') {
       this.stopNfc();
     }
@@ -429,6 +476,7 @@ struct Index {
   }
 
   private mainPage(next: string): void {
+    this.stopChatPolling();
     this.activeTab = next;
     this.page = next;
     this.loadForPage(next);
@@ -523,11 +571,13 @@ struct Index {
   }
 
   private async requestAt(baseUrl: string, path: string, method: http.RequestMethod, body?: Object): Promise<Record<string, Object>> {
+    const issuedEpoch = this.sessionEpoch;
     const request = http.createHttp();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
     };
-    if (this.authToken.length > 0) {
+    if (this.authToken.length > 0 && baseUrl === this.apiBaseUrl && path !== '/health' &&
+      path !== '/api/auth/login' && path !== '/api/auth/register') {
       headers['Authorization'] = 'Bearer ' + this.authToken;
     }
     if (this.placeRoomToken.length > 0 && path.indexOf('/room/') >= 0) {
@@ -544,8 +594,14 @@ struct Index {
       const resultText = typeof response.result === 'string' ? response.result : String(response.result);
       const parsed = resultText.length > 0 ? JSON.parse(resultText) as Record<string, Object> : {} as Record<string, Object>;
       const responseCode = Number(response.responseCode);
+      if (issuedEpoch !== this.sessionEpoch) throw new Error('账号状态已改变，请重试');
       if (responseCode >= 400) {
         const message = this.textValue(parsed['message'], this.textValue(parsed['error'], '后端请求失败'));
+        if (responseCode === 401 && headers['Authorization'] === 'Bearer ' + this.authToken) {
+          this.resetSession();
+          this.go('login');
+          await SessionVault.clear();
+        }
         throw new Error(message);
       }
       return parsed;
@@ -579,10 +635,130 @@ struct Index {
       this.loadProfileData();
     } else if (next === 'placeChat') {
       this.loadPlaceRoomFeed();
+    } else if (next === 'chatDetail') {
+      this.loadChatMessages();
+    }
+  }
+
+  private stopChatPolling(): void {
+    this.chatGeneration += 1;
+    if (this.chatTimer !== -1) clearInterval(this.chatTimer);
+    this.chatTimer = -1;
+  }
+
+  private resetSession(): void {
+    this.sessionEpoch += 1;
+    this.stopChatPolling();
+    this.stopNfc();
+    this.authToken = '';
+    this.currentUserId = '';
+    this.people = [];
+    this.moments = [];
+    this.worlds = [];
+    this.chatMessages = [];
+    this.placeRoomPosts = [];
+    this.placeRoomToken = '';
+    this.messageDraft = '';
+    this.pendingMessageId = '';
+    this.pendingMessageText = '';
+    this.pendingMessageChat = '';
+    this.loginPassword = '';
+    this.registerConfirm = '';
+    this.profileName = '未登录';
+    this.profileSubtitle = '';
+    this.profileStats = ['0', '0', '0', '0'];
+    this.merchantTapId = '';
+    this.merchantCheckedIn = false;
+    this.merchantPaid = false;
+    this.selectedPersonIndex = 0;
+    this.selectedWorldIndex = 0;
+  }
+
+  private async initializeSession(): Promise<void> {
+    try {
+      this.nfcDeviceId = await SessionVault.deviceId();
+      const saved = await SessionVault.load();
+      if (saved !== null) {
+        this.authToken = saved.token;
+        this.apiBaseUrl = saved.baseUrl;
+        // A token belongs to one server. Never send it to fallback discovery addresses.
+        const response = await this.apiGet('/api/auth/me');
+        const user = this.mapValue(response['user']);
+        this.currentUserId = this.textValue(user['id']);
+        this.profileName = this.textValue(user['displayName']);
+        await this.loadBackendData();
+        this.go(user['profileComplete'] === true ? 'explore' : 'identity');
+      } else {
+        await this.connectBackend();
+      }
+    } catch (error) {
+      this.backendStatus = '登录恢复失败，请检查后端连接后重试：' + String(error);
+      this.page = 'login';
+    } finally {
+      this.startupReady = true;
+    }
+  }
+
+  private async acceptLogin(response: Record<string, Object>): Promise<void> {
+    const token = this.textValue(response['token']);
+    const user = this.mapValue(response['user']);
+    const userId = this.textValue(user['id']);
+    const expiresAt = this.textValue(response['expiresAt']);
+    if (token.length === 0 || userId.length === 0 || !(Date.parse(expiresAt) > Date.now())) {
+      throw new Error('登录接口返回的会话无效');
+    }
+    await SessionVault.save({ token, expiresAt, baseUrl: this.apiBaseUrl });
+    this.resetSession();
+    this.authToken = token;
+    this.currentUserId = userId;
+    this.profileName = this.textValue(user['displayName']);
+  }
+
+  private async logoutWithBackend(): Promise<void> {
+    if (this.authBusy) return;
+    this.authBusy = true;
+    try {
+      // Do not claim logout while a saved token can still restore the session.
+      await this.apiPost('/api/auth/logout', {} as Record<string, Object>);
+      await SessionVault.clear();
+      this.resetSession();
+      this.backendStatus = '已退出登录';
+      this.go('login');
+    } catch (error) {
+      this.backendStatus = '退出失败，请保持网络连接后重试：' + String(error);
+    } finally {
+      this.authBusy = false;
+    }
+  }
+
+  private async loadChatMessages(): Promise<void> {
+    if (this.authToken.length === 0 || this.page !== 'chatDetail' || this.chatLoading) return;
+    const chatId = this.activeChatId();
+    const epoch = this.sessionEpoch;
+    const generation = this.chatGeneration;
+    this.chatLoading = true;
+    try {
+      const response = await this.apiGet('/api/chats/' + encodeURIComponent(chatId) + '/messages');
+      if (epoch !== this.sessionEpoch || generation !== this.chatGeneration || this.page !== 'chatDetail' || chatId !== this.activeChatId()) return;
+      if (!Array.isArray(response['messages'])) throw new Error('消息接口缺少 messages 列表');
+      this.chatMessages = this.mapArray(response['messages']).map((raw: Record<string, Object>): ChatMessageItem => {
+        return { id: this.textValue(raw['id']), text: this.textValue(raw['text']),
+          mine: this.textValue(raw['senderId']) === this.currentUserId };
+      });
+      this.chatError = '';
+    } catch (error) {
+      if (epoch === this.sessionEpoch && generation === this.chatGeneration && chatId === this.activeChatId()) this.chatError = '消息加载失败：' + String(error);
+    } finally {
+      this.chatLoading = false;
     }
   }
 
   private async connectBackend(): Promise<void> {
+    if (this.authToken.length > 0) {
+      await this.apiGet('/api/auth/me');
+      await this.loadBackendData();
+      return;
+    }
     for (let index = 0; index < API_BASE_CANDIDATES.length; index += 1) {
       const baseUrl = API_BASE_CANDIDATES[index];
       try {
@@ -595,7 +771,7 @@ struct Index {
         this.backendStatus = '正在尝试后端地址 ' + (index + 1) + '/' + API_BASE_CANDIDATES.length;
       }
     }
-    this.backendStatus = '未连接 MicroWorld 后端，当前使用本地离线演示数据';
+    this.backendStatus = '未连接后端，请确认电脑服务器已启动且手机可访问';
   }
 
   private async loadBackendData(): Promise<void> {
@@ -650,22 +826,22 @@ struct Index {
       icon: this.textValue(raw['glyph'], this.textValue(raw['icon'], fallback.icon)),
       intro: this.textValue(raw['summary'], this.textValue(raw['intro'], fallback.intro)),
       method: this.stringArray(raw['learningSteps']).join(' / ') || this.textValue(raw['method'], fallback.method),
-      clubs: clubs.length > 0 ? clubs : fallback.clubs,
-      places: places.length > 0 ? places : fallback.places,
+      clubs: clubs,
+      places: places,
       clubIds: clubIds
     };
   }
 
   private personFromBackend(friend: Record<string, Object>, chat: Record<string, Object>, fallback: ChatPerson): ChatPerson {
-    const displayName = this.textValue(friend['name'], this.textValue(friend['displayName'], fallback.name));
+    const displayName = this.textValue(friend['name'], this.textValue(friend['displayName'], '用户'));
     return {
-      id: this.textValue(friend['id'], fallback.id),
+      id: this.textValue(friend['id']),
       name: displayName,
       avatar: this.textValue(friend['avatar'], displayName.slice(0, 1) || fallback.avatar),
-      tag: this.textValue(friend['tag'], this.textValue(friend['common'], fallback.tag)),
-      place: this.textValue(friend['place'], this.textValue(friend['metAt'], fallback.place)),
-      lastMsg: this.textValue(chat['message'], this.textValue(friend['lastMsg'], fallback.lastMsg)),
-      bio: this.textValue(friend['bio'], fallback.bio),
+      tag: this.textValue(friend['tag'], this.textValue(friend['source'])),
+      place: this.textValue(friend['place'], this.textValue(friend['metAt'], '未提供地点')),
+      lastMsg: this.textValue(chat['message'], '暂无消息'),
+      bio: this.textValue(friend['bio']),
       color: this.textValue(friend['color'], fallback.color),
       chatId: this.textValue(chat['id'], 'chat-' + this.textValue(friend['id'], fallback.id))
     };
@@ -695,23 +871,32 @@ struct Index {
   }
 
   private async loadExploreData(): Promise<void> {
+    const requestId = ++this.exploreRequestId;
+    this.exploreLoading = true;
+    this.exploreError = '';
     try {
       const response = await this.apiGet(
         '/api/explore/places?interest=' + encodeURIComponent(this.selectedFilter) +
+        '&q=' + encodeURIComponent(this.exploreQuery.trim()) +
         '&latitude=' + DEMO_LATITUDE + '&longitude=' + DEMO_LONGITUDE
       );
+      if (requestId !== this.exploreRequestId) return;
+      if (!Array.isArray(response['places'])) throw new Error('地点接口缺少 places 列表');
       const rawPlaces = this.mapArray(response['places']);
-      if (rawPlaces.length > 0) {
-        this.places = rawPlaces.map((item: Record<string, Object>, index: number) => {
+      this.places = rawPlaces.map((item: Record<string, Object>, index: number) => {
           const fallback = PLACES[Math.min(index, PLACES.length - 1)] || PLACES[0];
           return this.placeFromBackend(item, fallback);
         });
-        if (this.selectedPlaceIndex >= this.places.length) {
-          this.selectedPlaceIndex = 0;
-        }
+      if (this.selectedPlaceIndex >= this.places.length) {
+        this.selectedPlaceIndex = 0;
       }
     } catch (error) {
-      this.backendStatus = '探索数据同步失败，继续使用本地数据';
+      if (requestId === this.exploreRequestId) {
+        this.places = [];
+        this.exploreError = '探索数据加载失败，请重试：' + String(error);
+      }
+    } finally {
+      if (requestId === this.exploreRequestId) this.exploreLoading = false;
     }
   }
 
@@ -729,54 +914,68 @@ struct Index {
   }
 
   private async loadInterestData(): Promise<void> {
+    const requestId = ++this.interestRequestId;
+    this.interestLoading = true;
+    this.interestError = '';
     try {
-      const response = await this.apiGet('/api/interests');
-      const rawInterests = this.mapArray(response['interests']);
-      if (rawInterests.length > 0) {
-        this.interests = rawInterests.map((item: Record<string, Object>, index: number) => {
-          const fallback = INTERESTS[Math.min(index, INTERESTS.length - 1)] || INTERESTS[0];
-          return this.interestFromBackend(item, fallback);
-        });
-        if (this.selectedInterestIndex >= this.interests.length) {
-          this.selectedInterestIndex = 0;
-        }
+      const response = await this.apiGet('/api/interests?category=' + encodeURIComponent(this.selectedInterestCat) +
+        '&q=' + encodeURIComponent(this.interestQuery.trim()));
+      if (requestId !== this.interestRequestId) return;
+      if (!Array.isArray(response['topics'])) {
+        throw new Error('兴趣接口缺少 topics 列表');
+      }
+      const rawInterests = this.mapArray(response['topics']);
+      this.interestCategories = this.stringArray(response['categories']);
+      this.interests = rawInterests.map((item: Record<string, Object>, index: number) => {
+        const fallback = INTERESTS[Math.min(index, INTERESTS.length - 1)] || INTERESTS[0];
+        return this.interestFromBackend(item, fallback);
+      });
+      if (this.selectedInterestIndex >= this.interests.length) {
+        this.selectedInterestIndex = 0;
       }
     } catch (error) {
-      this.backendStatus = '兴趣数据同步失败，继续使用本地数据';
+      if (requestId === this.interestRequestId) {
+        this.interests = [];
+        this.interestError = '兴趣加载失败：' + String(error);
+      }
+    } finally {
+      if (requestId === this.interestRequestId) this.interestLoading = false;
     }
   }
 
   private async loadSocialData(): Promise<void> {
+    if (this.authToken.length === 0) return;
+    const epoch = this.sessionEpoch;
+    this.socialError = '';
+    const selectedPersonId = this.people[this.selectedPersonIndex]?.id || '';
     try {
       const response = await this.apiGet('/api/social/home');
+      if (epoch !== this.sessionEpoch) return;
       const friends = this.mapArray(response['friends']);
       const chats = this.mapArray(response['chats']);
-      if (friends.length > 0) {
-        this.people = friends.map((friend: Record<string, Object>, index: number) => {
+      this.people = friends.map((friend: Record<string, Object>, index: number) => {
           const friendId = this.textValue(friend['id']);
           const chat = chats.find((item: Record<string, Object>) => this.textValue(item['friendId']) === friendId) || {} as Record<string, Object>;
           const fallback = PEOPLE[Math.min(index, PEOPLE.length - 1)] || PEOPLE[0];
           return this.personFromBackend(friend, chat, fallback);
         });
-        if (this.selectedPersonIndex >= this.people.length) {
-          this.selectedPersonIndex = 0;
-        }
-      }
+      const newIndex = this.people.findIndex((person: ChatPerson) => person.id === selectedPersonId);
+      this.selectedPersonIndex = newIndex >= 0 ? newIndex : 0;
       const rawMoments = this.mapArray(response['moments']);
-      if (rawMoments.length > 0) {
-        this.moments = rawMoments.map((item: Record<string, Object>, index: number) => {
+      this.moments = rawMoments.map((item: Record<string, Object>, index: number) => {
           const fallback = MOMENTS[Math.min(index, MOMENTS.length - 1)] || MOMENTS[0];
           return this.momentFromBackend(item, fallback);
         });
-      }
     } catch (error) {
-      this.backendStatus = '聊天数据需要登录或后端未连接';
+      if (epoch === this.sessionEpoch) this.socialError = '聊天数据加载失败，请重试：' + String(error);
     }
   }
 
   private async loadProfileData(): Promise<void> {
+    const epoch = this.sessionEpoch;
     try {
       const response = await this.apiGet('/api/me/profile');
+      if (epoch !== this.sessionEpoch) return;
       const display = this.mapValue(response['display']);
       const stats = this.mapValue(response['stats']);
       this.profileName = this.textValue(display['name'], this.profileName);
@@ -809,17 +1008,19 @@ struct Index {
   }
 
   private async loadWorldData(): Promise<void> {
+    const epoch = this.sessionEpoch;
+    this.worldError = '';
     try {
       const response = await this.apiGet('/api/worlds');
+      if (epoch !== this.sessionEpoch) return;
       const rawWorlds = this.mapArray(response['worlds']);
-      if (rawWorlds.length > 0) {
-        this.worlds = rawWorlds.map((item: Record<string, Object>, index: number) => {
+      this.worlds = rawWorlds.map((item: Record<string, Object>, index: number) => {
           const fallback = WORLDS[Math.min(index, WORLDS.length - 1)] || WORLDS[0];
           return this.worldFromBackend(item, fallback);
         });
-      }
+      if (this.selectedWorldIndex >= this.worlds.length) this.selectedWorldIndex = 0;
     } catch (error) {
-      this.backendStatus = '世界后端暂未连接，继续使用本地世界展示';
+      if (epoch === this.sessionEpoch) this.worldError = '世界加载失败，请重试：' + String(error);
     }
   }
 
@@ -838,18 +1039,24 @@ struct Index {
   }
 
   private async createWorldWithBackend(): Promise<void> {
+    if (this.worldSaving) return;
     if (this.authToken.length === 0) {
-      this.backendStatus = '登录后才能创建小世界';
-      this.go('worldDetail');
+      this.worldFormError = '登录后才能创建小世界';
       return;
     }
+    if (this.worldNameDraft.trim().length < 2 || this.worldNameDraft.trim().length > 36 || this.worldPlaceIdDraft.length === 0) {
+      this.worldFormError = '请填写 2–36 字的世界名称并选择地点';
+      return;
+    }
+    this.worldSaving = true;
+    this.worldFormError = '';
     try {
       const body: WorldCreateBody = {
-        name: '我的城市微缩世界',
-        placeId: this.currentPlace().id,
+        name: this.worldNameDraft.trim(),
+        placeId: this.worldPlaceIdDraft,
         description: '一个绑定真实地点的私有创作空间。',
-        visibility: 'private',
-        theme: 'memoryGarden',
+        visibility: this.worldVisibilityDraft,
+        theme: this.worldThemeDraft,
         allowCollaboration: false
       };
       const response = await this.apiPost('/api/worlds', body);
@@ -857,8 +1064,9 @@ struct Index {
       this.backendStatus = this.textValue(response['message'], '小世界已创建');
       this.go('worldDetail');
     } catch (error) {
-      this.backendStatus = '小世界创建失败：' + String(error);
-      this.go('worldDetail');
+      this.worldFormError = '小世界创建失败：' + String(error);
+    } finally {
+      this.worldSaving = false;
     }
   }
 
@@ -920,26 +1128,32 @@ struct Index {
   }
 
   private async loginWithBackend(): Promise<void> {
+    if (!this.startupReady || this.authBusy) return;
+    this.authBusy = true;
     try {
+      if (this.nfcDeviceId.length === 0) this.nfcDeviceId = await SessionVault.deviceId();
       if (this.backendStatus.indexOf('已连接后端') < 0) {
         await this.connectBackend();
       }
       const body: LoginBody = {
         email: this.loginEmail,
         password: this.loginPassword,
-        deviceId: DEVICE_ID
+        deviceId: this.nfcDeviceId
       };
       const response = await this.apiPost('/api/auth/login', body);
-      this.authToken = this.textValue(response['token']);
+      await this.acceptLogin(response);
       this.backendStatus = '登录成功，正在同步后端数据';
       await this.loadBackendData();
-      this.go('explore');
+      this.go(this.mapValue(response['user'])['profileComplete'] === true ? 'explore' : 'identity');
     } catch (error) {
       this.backendStatus = '登录失败：' + String(error);
+    } finally {
+      this.authBusy = false;
     }
   }
 
   private async registerWithBackend(): Promise<void> {
+    if (!this.startupReady || this.authBusy) return;
     const email = this.loginEmail.trim();
     const displayName = this.registerName.trim().length > 0 ? this.registerName.trim() : '城市书签';
     // 前端即时校验,失败立刻给出清晰提示(与后端规则一致)。
@@ -959,29 +1173,35 @@ struct Index {
       this.backendStatus = '两次输入的密码不一致';
       return;
     }
+    this.authBusy = true;
     try {
+      if (this.nfcDeviceId.length === 0) this.nfcDeviceId = await SessionVault.deviceId();
       this.backendStatus = '正在连接后端并创建账号...';
       await this.connectBackend();
       const body: RegisterBody = {
         email,
         password: this.loginPassword,
         displayName,
-        deviceId: DEVICE_ID
+        deviceId: this.nfcDeviceId
       };
       const response = await this.apiPost('/api/auth/register', body);
-      this.authToken = this.textValue(response['token']);
+      await this.acceptLogin(response);
       this.backendStatus = '账号创建成功，继续创建线下社交身份';
       this.go('identity');
     } catch (error) {
       this.backendStatus = '创建账号失败：' + String(error) + '（请确认后端已启动且可访问）';
+    } finally {
+      this.authBusy = false;
     }
   }
 
   private async saveIdentityWithBackend(): Promise<void> {
+    if (this.identitySaving) return;
     if (this.authToken.length === 0) {
-      this.go('explore');
+      this.go('login');
       return;
     }
+    this.identitySaving = true;
     try {
       const body: IdentityBody = {
         interests: this.selectedInterests,
@@ -991,8 +1211,9 @@ struct Index {
       await this.loadBackendData();
       this.go('explore');
     } catch (error) {
-      this.backendStatus = '身份保存失败，已进入离线演示';
-      this.go('explore');
+      this.backendStatus = '身份保存失败，请重试：' + String(error);
+    } finally {
+      this.identitySaving = false;
     }
   }
 
@@ -1030,9 +1251,6 @@ struct Index {
 
   private syncPlaceRoomPosts(value: Object | undefined): void {
     const posts = this.mapArray(value);
-    if (posts.length === 0) {
-      return;
-    }
     this.placeRoomPosts = posts.map((item: Record<string, Object>) => {
       const post: MomentItem = {
         author: this.textValue(item['authorName'], '现场用户'),
@@ -1062,20 +1280,34 @@ struct Index {
 
   private async sendChatMessage(): Promise<void> {
     const text = this.messageDraft.trim();
-    if (text.length === 0 || this.authToken.length === 0) {
+    if (text.length === 0 || this.authToken.length === 0 || this.sendingMessage) {
       return;
     }
+    const chatId = this.activeChatId();
+    const epoch = this.sessionEpoch;
+    this.sendingMessage = true;
     try {
-      const body: MessageBody = { text };
-      await this.apiPost('/api/chats/' + this.activeChatId() + '/messages', body);
-      this.messageDraft = '';
+      if (this.pendingMessageText !== text || this.pendingMessageChat !== chatId || this.pendingMessageId.length === 0) {
+        this.pendingMessageId = util.generateRandomUUID(true);
+        this.pendingMessageText = text;
+        this.pendingMessageChat = chatId;
+      }
+      const body: MessageBody = { text, clientMessageId: this.pendingMessageId };
+      await this.apiPost('/api/chats/' + encodeURIComponent(chatId) + '/messages', body);
+      if (epoch !== this.sessionEpoch || chatId !== this.activeChatId()) return;
+      if (this.messageDraft.trim() === text) this.messageDraft = '';
+      this.pendingMessageId = '';
+      await this.loadChatMessages();
       await this.loadSocialData();
     } catch (error) {
-      this.backendStatus = '消息发送失败：' + String(error);
+      if (epoch === this.sessionEpoch) this.chatError = '消息发送失败，输入已保留：' + String(error);
+    } finally {
+      this.sendingMessage = false;
     }
   }
 
   private updateInput(label: string, placeholder: string, value: string): void {
+    if (label === '世界名称') this.worldNameDraft = value;
     if (label === '邮箱') {
       this.loginEmail = value;
     }
@@ -1274,7 +1506,7 @@ struct Index {
       return;
     }
     try {
-      const body: MerchantReviewBody = { stars: this.merchantStars, tags: this.merchantTags, comment: '' };
+      const body: MerchantReviewBody = { stars: this.merchantStars, tags: this.merchantTags, comment: this.merchantPlaceComment.trim() };
       const response = await this.apiPost('/api/merchant/taps/' + this.merchantTapId + '/place-reviews', body);
       const reward = this.mapValue(response['reward']);
       const medal = this.mapValue(reward['medal']);
@@ -1299,7 +1531,7 @@ struct Index {
         itemName: this.merchantItemName,
         stars: this.merchantStars,
         tags: this.merchantTags,
-        comment: ''
+        comment: this.merchantItemComment.trim()
       };
       await this.apiPost('/api/merchant/taps/' + this.merchantTapId + '/item-reviews', body);
       this.merchantTags = [];
@@ -1312,7 +1544,7 @@ struct Index {
   }
 
   aboutToAppear(): void {
-    this.connectBackend();
+    this.initializeSession();
   }
 
   private async addPlaceMarkers(): Promise<void> {
@@ -1335,6 +1567,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    this.stopChatPolling();
     this.nfcManager.stop();
   }
 
@@ -1584,6 +1817,7 @@ struct Index {
           .backgroundColor(C_DEEP)
           .borderRadius(18)
           .margin({ top: 42 })
+          .enabled(this.startupReady && !this.authBusy)
           .onClick(() => { this.loginWithBackend(); });
         Button('创建新账号')
           .width('100%')
@@ -1656,6 +1890,7 @@ struct Index {
           .backgroundColor(C_DEEP)
           .borderRadius(18)
           .margin({ top: 28 })
+          .enabled(this.startupReady && !this.authBusy)
           .onClick(() => { this.registerWithBackend(); });
       }
       .padding({ left: 28, right: 28, top: 14, bottom: 32 });
@@ -1723,7 +1958,9 @@ struct Index {
           .backgroundColor(C_DEEP)
           .borderRadius(18)
           .margin({ top: 16, bottom: 30 })
+          .enabled(!this.identitySaving)
           .onClick(() => { this.saveIdentityWithBackend(); });
+        Text(this.backendStatus).fontSize(12).fontColor(C_MUTED).width('100%');
       }
       .padding({ left: 28, right: 28, top: 14 });
     }
@@ -1741,7 +1978,18 @@ struct Index {
       Column() {
         this.SearchHeader();
         Blank();
-        this.SelectedPlaceSheet();
+        if (this.exploreLoading) {
+          Text('正在加载地点…').padding(20).backgroundColor(C_CARD).borderRadius(16);
+        } else if (this.exploreError.length > 0) {
+          Column() {
+            Text(this.exploreError).fontColor(C_ORANGE);
+            Button('重试').onClick(() => { this.loadExploreData(); });
+          }.padding(20).backgroundColor(C_CARD).borderRadius(16);
+        } else if (this.places.length === 0) {
+          Text('没有符合条件的地点').padding(20).backgroundColor(C_CARD).borderRadius(16);
+        } else {
+          this.SelectedPlaceSheet();
+        }
       }
       .width('100%')
       .height('100%')
@@ -1829,12 +2077,15 @@ struct Index {
         Text('⌕')
           .fontSize(18)
           .fontColor('#AEB1A6');
-        TextInput({ placeholder: '搜索地点 / 兴趣 / 活动' })
+        TextInput({ placeholder: '搜索地点，输入后按搜索', text: this.exploreQuery })
           .layoutWeight(1)
           .height(42)
           .fontSize(14)
           .backgroundColor(Color.Transparent)
-          .margin({ left: 8 });
+          .margin({ left: 8 })
+          .enterKeyType(EnterKeyType.Search)
+          .onChange((value: string) => { this.exploreQuery = value; })
+          .onSubmit(() => { this.loadExploreData(); });
         Text('≡')
           .fontSize(17)
           .fontColor(Color.White)
@@ -2394,18 +2645,34 @@ struct Index {
         // 左侧竖排分类栏 + 右侧搜索与卡片(对齐设计原型)。
         Row() {
           Column() {
-            ForEach(INTEREST_CATEGORIES, (item: string) => {
+            ForEach(this.interestCategories, (item: string) => {
               this.InterestCatChip(item);
             }, (item: string) => item);
           }
           .width(72);
           Column() {
-            TextInput({ placeholder: '搜索兴趣 / 俱乐部' })
+            TextInput({ placeholder: '搜索兴趣，输入后按搜索', text: this.interestQuery })
               .height(44)
               .fontSize(14)
               .backgroundColor(C_CARD)
               .borderRadius(14)
-              .margin({ bottom: 12 });
+              .margin({ bottom: 12 })
+              .enterKeyType(EnterKeyType.Search)
+              .onChange((value: string) => { this.interestQuery = value; })
+              .onSubmit(() => { this.loadInterestData(); });
+            Button('搜索 / 刷新').onClick(() => { this.loadInterestData(); });
+            if (this.interestLoading) {
+              Text('正在加载…').fontColor(C_MUTED).padding(16);
+            } else if (this.interestError.length > 0) {
+              Text(this.interestError).fontColor(C_ORANGE).padding(16);
+              Button('重试').onClick(() => { this.loadInterestData(); });
+            } else if (this.interests.length === 0) {
+              Text('暂无兴趣内容')
+                .fontSize(14)
+                .fontColor(C_MUTED)
+                .width('100%')
+                .padding({ top: 24, bottom: 24 });
+            }
             ForEach(this.interests, (item: InterestItem, index: number) => {
               Column() {
                 Row() {
@@ -2626,6 +2893,12 @@ struct Index {
   WorldPage() {
     Scroll() {
       Column() {
+        if (this.worldError.length > 0) {
+          Text(this.worldError).fontColor(C_ORANGE).width('100%');
+          Button('重试').onClick(() => { this.loadWorldData(); });
+        } else if (this.worlds.length === 0 && this.worldTab === 'spaces') {
+          Text('暂无可见的小世界，可以创建第一个').fontColor(C_MUTED).padding(16);
+        }
         Row() {
           Column() {
             Text('世界')
@@ -3011,16 +3284,17 @@ struct Index {
     Scroll() {
       Column() {
         this.BackHeader('创建小世界', 'world');
-        this.InputBlock('世界名称', '我的城市微缩世界', '', false);
+        this.InputBlock('世界名称', '我的城市微缩世界', this.worldNameDraft, false);
         Text('绑定真实地点')
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
           .fontColor('#9AA194')
           .width('100%')
           .margin({ top: 2, bottom: 8 });
-        Row() {
-          this.PurpleChip('State Library', true);
-          this.PurpleChip('Market Lane', false);
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.places, (place: PlaceItem) => {
+            this.SelectableChip(place.shortName, this.worldPlaceIdDraft === place.id, () => { this.worldPlaceIdDraft = place.id; });
+          }, (place: PlaceItem) => place.id);
         }
         Text('主题')
           .fontSize(11)
@@ -3029,8 +3303,8 @@ struct Index {
           .width('100%')
           .margin({ top: 18, bottom: 8 });
         Row() {
-          this.PurpleChip('记忆花园', false);
-          this.PurpleChip('城市书签', true);
+          this.SelectableChip('记忆花园', this.worldThemeDraft === 'memoryGarden', () => { this.worldThemeDraft = 'memoryGarden'; });
+          this.SelectableChip('城市工作室', this.worldThemeDraft === 'cityStudio', () => { this.worldThemeDraft = 'cityStudio'; });
         }
         Text('可见范围')
           .fontSize(11)
@@ -3038,9 +3312,13 @@ struct Index {
           .fontColor('#9AA194')
           .width('100%')
           .margin({ top: 18, bottom: 8 });
-        this.ListCard('●', '仅受邀朋友', '更适合第一个私有空间');
-        this.ListCard('○', '附近所有人', '到场后可见');
-        Button('生成小世界')
+        this.SelectableChip('仅自己可见', this.worldVisibilityDraft === 'private', () => { this.worldVisibilityDraft = 'private'; });
+        this.SelectableChip('公开', this.worldVisibilityDraft === 'public', () => { this.worldVisibilityDraft = 'public'; });
+        if (this.worldFormError.length > 0) {
+          Text(this.worldFormError).fontColor(C_ORANGE).width('100%');
+        }
+        Button(this.worldSaving ? '正在创建…' : '生成小世界')
+          .enabled(!this.worldSaving)
           .width('100%')
           .height(54)
           .fontColor(Color.White)
@@ -3100,13 +3378,21 @@ struct Index {
         }
         .width('100%')
         .margin({ top: 14, bottom: 10 });
+        if (this.socialError.length > 0) {
+          Text(this.socialError).fontColor(C_ORANGE).width('100%');
+          Button('重试').onClick(() => { this.loadSocialData(); });
+        }
         if (mode === 'moments') {
+          if (this.moments.length === 0) {
+            Text('暂无动态').fontColor(C_MUTED).padding(24);
+          }
           ForEach(this.moments, (item: MomentItem) => {
             this.MomentCard(item);
           }, (item: MomentItem) => item.author + item.time);
         } else {
-          if (mode === 'friends') {
-            this.ListCard('＋', '新的连接请求', '慢半拍摄影 想连接');
+          if (this.people.length === 0) {
+            Text(this.authToken.length === 0 ? '登录后查看朋友和对话' : '还没有建立连接的朋友')
+              .fontColor(C_MUTED).padding(24);
           }
           ForEach(this.people, (person: ChatPerson, index: number) => {
             this.PersonCard(person, index, mode === 'friends');
@@ -3157,9 +3443,16 @@ struct Index {
         .margin({ left: 20, right: 20, top: 12 });
       Scroll() {
         Column() {
-          this.ChatBubble(this.currentPerson().name, this.currentPerson().lastMsg, false);
-          this.ChatBubble('我', '对，而且不太尴尬。', true);
-          this.ChatBubble(this.currentPerson().name, '下次可以一起看这个地点的小世界。', false);
+          if (this.chatError.length > 0) {
+            Text(this.chatError).fontColor(C_ORANGE).width('100%');
+            Button('重试加载').onClick(() => { this.loadChatMessages(); });
+          } else if (this.chatMessages.length === 0) {
+            Text(this.chatLoading ? '正在加载消息…' : '暂无消息，打个招呼吧')
+              .fontColor(C_MUTED).padding(24);
+          }
+          ForEach(this.chatMessages, (message: ChatMessageItem) => {
+            this.ChatBubble(message.mine ? '我' : this.currentPerson().name, message.text, message.mine);
+          }, (message: ChatMessageItem) => message.id);
         }
         .padding({ left: 20, right: 20, top: 14, bottom: 14 });
       }
@@ -3167,12 +3460,14 @@ struct Index {
       .layoutWeight(1);
       Row() {
         TextInput({ placeholder: '输入消息...', text: this.messageDraft })
+          .maxLength(500)
           .layoutWeight(1)
           .height(44)
           .backgroundColor(C_CARD)
           .borderRadius(18)
           .onChange((value: string) => { this.messageDraft = value; });
-        Button('发送')
+        Button(this.sendingMessage ? '发送中' : '发送')
+          .enabled(!this.sendingMessage && this.messageDraft.trim().length > 0)
           .width(76)
           .height(44)
           .fontColor(Color.White)
@@ -3874,6 +4169,9 @@ struct Index {
           }, (item: string) => item);
         }
         .width('100%');
+        TextInput({ placeholder: '写下你的到店体验（选填）', text: this.merchantPlaceComment })
+          .maxLength(240)
+          .onChange((value: string) => { this.merchantPlaceComment = value; });
         Button('提交评价')
           .width('100%')
           .height(54)
@@ -3944,6 +4242,9 @@ struct Index {
           }, (item: string) => item);
         }
         .width('100%');
+        TextInput({ placeholder: '写下你的商品体验（选填）', text: this.merchantItemComment })
+          .maxLength(240)
+          .onChange((value: string) => { this.merchantItemComment = value; });
         Button('提交评价')
           .width('100%')
           .height(54)
@@ -4109,7 +4410,10 @@ struct Index {
         } else {
           this.ListCard('隐', '隐私设置', '今天不想被发现 / 隐身模式');
           this.ListCard('通', '通知设置', '活动提醒、连接请求、地点广场');
-          this.ListCard('退', '退出登录', '清除当前登录状态');
+          Text(this.backendStatus).fontColor(C_MUTED).width('100%');
+          Button(this.authBusy ? '正在退出…' : '退出登录')
+            .enabled(!this.authBusy)
+            .onClick(() => { this.logoutWithBackend(); });
         }
       }
       .padding({ left: 22, right: 22, top: 14, bottom: 28 });
@@ -4305,7 +4609,7 @@ struct Index {
       .border({ width: 1, color: this.selectedInterestCat === text ? C_DEEP : '#E7E2D8' })
       .borderRadius(14)
       .margin({ bottom: 10 })
-      .onClick(() => { this.selectedInterestCat = text; });
+      .onClick(() => { this.selectedInterestCat = text; this.loadInterestData(); });
   }
 
   @Builder
