@@ -1,11 +1,9 @@
-# 本地验证「数据库持久化」链路:用一个本地 Postgres 模拟华为云 GaussDB/RDS。
-# GaussDB(openGauss)与 RDS for PostgreSQL 都走 Postgres 协议,本地 Postgres 验证通过后,
-# 上云只需把 SMALLWORLD_DATABASE_URL 换成华为云实例地址即可。
+# 本地 PostgreSQL 验证环境；不能替代华为云网络、TLS 或 openGauss 兼容性验收。
 #
 # 用法:
 #   cd backend
 #   docker compose -f docker-compose.db.yml up --build
-#   # 起来后:curl http://127.0.0.1:8787/health  应返回 "dataMode":"huawei-gaussdb"
+#   # 起来后:curl http://127.0.0.1:8787/health  应返回 "dataMode":"postgres"
 #
 # 跑数据库模式的冒烟测试(需要本机已 npm install,且 db 已在 5433 端口就绪):
 #   SMALLWORLD_DATABASE_URL=postgres://microworld:microworld@127.0.0.1:5433/microworld \

@@ -552,7 +552,18 @@ function writeData(data) {
   store.writeRaw(data);
 }
 
+const pendingResponses = new WeakMap();
+const requestBodies = new WeakMap();
+
 function send(res, status, body) {
+  if (res.destroyed || res.writableEnded) return;
+  const text = status === 204 ? '' : JSON.stringify(body);
+  const pending = pendingResponses.get(res);
+  if (pending) { pending.status = status; pending.text = text; return; }
+  writeResponse(res, status, text);
+}
+
+function writeResponse(res, status, text) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': CORS_ORIGIN,
@@ -564,7 +575,7 @@ function send(res, status, body) {
     res.end();
     return;
   }
-  res.end(JSON.stringify(body));
+  res.end(text);
 }
 
 function deferredFeature(feature, message) {
@@ -647,27 +658,38 @@ function frontendContract() {
 }
 
 function readBody(req) {
+  if (requestBodies.has(req)) return Promise.resolve(requestBodies.get(req));
   return new Promise((resolve, reject) => {
     let raw = '';
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error); else resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error('request body timed out')), 10000);
     req.on('data', chunk => {
+      if (settled) return;
       raw += chunk;
       if (raw.length > 1024 * 1024) {
-        reject(new Error('request body too large'));
+        finish(new Error('request body too large'));
         req.destroy();
       }
     });
     req.on('end', () => {
       if (!raw) {
-        resolve({});
+        finish(null, {});
         return;
       }
       try {
-        resolve(JSON.parse(raw));
+        finish(null, JSON.parse(raw));
       } catch (error) {
-        reject(error);
+        finish(error);
       }
     });
-    req.on('error', reject);
+    req.on('error', error => finish(error));
+    req.on('aborted', () => finish(new Error('request aborted')));
   });
 }
 
@@ -1372,7 +1394,7 @@ function secureToken() {
   return crypto.randomBytes(24).toString('base64url');
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   if (req.method === 'OPTIONS') {
     send(res, 204, {});
     return;
@@ -1839,6 +1861,34 @@ const server = http.createServer(async (req, res) => {
     }
     send(res, 500, { error: 'SERVER_ERROR', message: error.message });
   }
+}
+
+const server = http.createServer(async (req, res) => {
+  if (!store.runRequest || req.method === 'OPTIONS') return handleRequest(req, res);
+  // Read bounded input before taking the singleton row lock; slow uploads must
+  // not hold a database transaction and block all other users.
+  if (req.method === 'POST') {
+    try { requestBodies.set(req, await readBody(req)); }
+    catch { send(res, 400, { error: 'INVALID_REQUEST_BODY', message: '请求正文无效、过大或读取超时' }); return; }
+  }
+  const pending = { status: 0, text: '' };
+  pendingResponses.set(res, pending);
+  try {
+    await store.runRequest(async () => {
+      await handleRequest(req, res);
+      if (!pending.status || pending.status >= 500 || res.destroyed) {
+        const error = new Error('request aborted before database commit');
+        error.response = pending.status ? { ...pending } : null;
+        throw error;
+      }
+    });
+    if (!res.destroyed) writeResponse(res, pending.status, pending.text);
+  } catch (error) {
+    if (!res.destroyed && !res.headersSent) {
+      if (error.response) writeResponse(res, error.response.status, error.response.text);
+      else writeResponse(res, 503, JSON.stringify({ error: error.code || 'STORAGE_UNAVAILABLE', message: error.message }));
+    }
+  } finally { pendingResponses.delete(res); requestBodies.delete(req); }
 });
 
 async function startServer() {
@@ -1863,15 +1913,17 @@ if (require.main === module) {
     shuttingDown = true;
     console.log(`MicroWorld backend received ${signal}, shutting down...`);
     // 兜底:即使 flush/close 卡住也强制退出。
-    setTimeout(() => process.exit(0), 4000).unref();
-    try {
-      await store.flush();
-      await store.close();
-    } catch (error) {
-      console.error(`MicroWorld backend 关闭时落库失败: ${error.message}`);
-    }
-    server.close(() => {
-      process.exit(0);
+    setTimeout(() => process.exit(1), 15000).unref();
+    // Stop accepting work, drain in-flight transactions, then close the pool.
+    server.close(async () => {
+      try {
+        await store.flush();
+        await store.close();
+        process.exit(0);
+      } catch (error) {
+        console.error('MicroWorld backend 关闭存储失败');
+        process.exit(1);
+      }
     });
   };
 

@@ -1,8 +1,10 @@
+> 当前状态：PostgreSQL 事务驱动已改造，但尚未连接真实数据库或华为云。以下部署步骤需实际验证；openGauss 不作为已验证兼容目标。TLS 与测试入口以 STORAGE_RELIABILITY.md 为准。
+
 # MicroWorld 华为云部署指引(登录注册 + 数据存储)
 
 本文档说明如何把 MicroWorld 后端(现有 Node 服务)部署到**华为云**,并用**华为云数据库**承载登录注册与全部业务数据。
 
-采用的是「方案 A」:复用现有后端全部代码与登录注册逻辑,把持久化从本地 JSON 文件切换到华为云 GaussDB/RDS。前端只需把 API 地址指向云端。
+采用的是「方案 A」:复用现有后端代码与登录注册逻辑,计划把持久化从本地 JSON 文件切换到华为云 RDS for PostgreSQL。部署并验收成功后，前端将 API 地址指向云端。
 
 ---
 
@@ -15,7 +17,7 @@
 华为云 ECS / CCE 上的 Node 后端(本仓库 backend/)
         │  Postgres 协议(SSL)
         ▼
-华为云 GaussDB(openGauss) 或 RDS for PostgreSQL
+华为云 RDS for PostgreSQL（待实际部署验证）
         └─ 单表 microworld_state 存整份应用状态(含账号、登录态、地点、世界、聊天…)
 ```
 
@@ -29,7 +31,7 @@
 ## 1. 分工(重要)
 
 **我(Claude)已经完成的代码侧改动:**
-- 可插拔持久层 `backend/src/shared/store.js`:file 驱动 + 华为云 GaussDB/RDS 驱动(Postgres 协议),对上层保持同步读写,业务模块零改动。
+- 可插拔持久层：原子文件保存或请求级 PostgreSQL 事务；HTTP 响应等待 COMMIT。真实云端和 openGauss 兼容性须实测。
 - `backend/server.js` 接入 store;启动时建表/装载,关闭时落库。
 - `backend/Dockerfile` 修正(补上 `src/` 拷贝与依赖安装,原镜像会缺模块崩溃)。
 - `backend/package.json` 增加 `pg` 依赖。
@@ -46,7 +48,7 @@
 
 ## 2. 先在本地验证数据库链路(强烈建议,免得上云才发现问题)
 
-用一个本地 Postgres 模拟华为云数据库(两者都是 Postgres 协议):
+先用本地 PostgreSQL 验证基础读写链路；这不能替代云端网络、证书和数据库版本验收：
 
 ```bash
 cd backend
@@ -57,7 +59,7 @@ docker compose -f docker-compose.db.yml up --build
 
 ```bash
 curl http://127.0.0.1:8787/health
-# 期望看到  "dataMode":"huawei-gaussdb"
+# 期望看到  "dataMode":"postgres"
 ```
 
 或者用现有全链路冒烟测试打数据库模式(需先 `npm install`):
@@ -80,7 +82,7 @@ npm run smoke:db
 二选一(都兼容,驱动一致):
 
 - **RDS for PostgreSQL**(最省心,标准 Postgres)。
-- **GaussDB(openGauss)**(华为自研,兼容 Postgres 协议)。
+- **GaussDB(openGauss)** 不属于当前已验证目标，需单独完成驱动、SQL 与事务兼容性测试后再考虑。
 
 控制台步骤(以 RDS for PostgreSQL 为例):
 1. 华为云控制台 → 搜索「RDS」→ 购买数据库实例 → 引擎选 **PostgreSQL**。
@@ -89,7 +91,7 @@ npm run smoke:db
 4. 实例创建后,进入实例 → 新建数据库,库名如 `microworld`。
 5. 记录:**内网 IP / 域名、端口(默认 5432)、用户名、密码、库名**。
 6. 安全组 / 白名单:放通后端服务器所在网段访问数据库端口;**不要**对公网 `0.0.0.0/0` 开放数据库端口。
-7. SSL:华为云数据库默认开启 SSL。可先不配 CA(链路加密但不校验证书);生产建议在实例页下载 CA 证书,把内容放进 `SMALLWORLD_DATABASE_CA`。
+7. TLS：检查实例实际配置。本驱动默认强制校验证书；若系统信任库无法验证实例证书，配置可信 CA 到 `SMALLWORLD_DATABASE_CA`，不可通过关闭校验绕过生产连接失败。
 
 连接串格式:
 
@@ -121,7 +123,7 @@ docker run -d --name microworld-backend \
   microworld-backend
 ```
 
-5. 验证:`curl http://127.0.0.1:8787/health` → `"dataMode":"huawei-gaussdb"`。
+5. 验证:`curl http://127.0.0.1:8787/health` → `"dataMode":"postgres"`。
 6. 安全组:对外只放通 App 需要访问的端口(建议前面加一层带 HTTPS 的反向代理,见第 6 节),数据库端口绝不对公网开放。
 
 ### 方案 2:CCE(K8s,需要弹性/多副本时再用)
@@ -178,7 +180,7 @@ const API_BASE_CANDIDATES: string[] = [
 | --- | --- |
 | `SMALLWORLD_DATABASE_URL` | 设置后切换到华为云数据库;格式 `postgres://user:pass@host:5432/db` |
 | `SMALLWORLD_DATABASE_TABLE` | 状态表名,默认 `microworld_state`,自动建表 |
-| `SMALLWORLD_DATABASE_SSL` | 留空=加密不校验证书;`disable`=关 SSL(仅本地测试) |
+| `SMALLWORLD_DATABASE_SSL` | 留空或 `verify-full`=加密并校验证书；`disable`=关 TLS（仅本地测试） |
 | `SMALLWORLD_DATABASE_CA` | 生产可放 CA 证书内容以开启完整校验 |
 | `SMALLWORLD_DATABASE_POOL` | 连接池大小,默认 4 |
 | `SMALLWORLD_CORS_ORIGIN` | 生产设为前端来源,别用 `*` |

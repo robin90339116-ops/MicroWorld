@@ -55,6 +55,9 @@ function authHeaders(token) {
 }
 
 async function main() {
+  if (process.env.SMALLWORLD_DATABASE_URL && process.env.SMALLWORLD_SMOKE_DB_ISOLATED !== '1') {
+    throw new Error('数据库回归必须使用 npm run smoke:db 的隔离表入口，禁止直接对业务表运行 smoke');
+  }
   const child = spawn(process.execPath, ['server.js'], {
     cwd: root,
     env: {
