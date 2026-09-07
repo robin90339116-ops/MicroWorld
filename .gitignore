@@ -18,6 +18,7 @@ backend/server.log
 # Local environment
 .env
 backend/.env
+**/merchant-registry.local.json
 
 # Temporary exports/check artifacts
 tmp/

@@ -1,4 +1,5 @@
 const merchantTapService = require('./merchant-tap.service');
+const terminalService = require('./merchant-terminal.service');
 
 async function handleMerchantTapRoutes({
   req,
@@ -14,6 +15,23 @@ async function handleMerchantTapRoutes({
   persist
 }) {
   const options = { pickPlace, enrichPlace, createId, persist };
+
+  const terminalObserve = url.pathname.match(/^\/api\/merchant\/terminals\/sessions\/([^/]+)\/observe$/);
+  if ((req.method === 'GET' && url.pathname === '/api/merchant/terminals') ||
+      (req.method === 'POST' && (url.pathname === '/api/merchant/terminals/sessions' || terminalObserve))) {
+    const body = req.method === 'POST' ? await readBody(req) : {};
+    const data = readData();
+    const auth = authenticate(data, req);
+    if (!auth) {
+      send(res, 401, { error: 'AUTH_REQUIRED', message: '请先登录商家账号' });
+      return true;
+    }
+    const result = req.method === 'GET' ? terminalService.listTerminals(auth.account, auth.session.deviceId, options) :
+      terminalObserve ? terminalService.observe(data, auth.account, auth.session.deviceId, terminalObserve[1], body, options) :
+        terminalService.issue(data, auth.account, auth.session.deviceId, body, options);
+    send(res, result.status, result.body);
+    return true;
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/merchant/taps') {
     const data = readData();

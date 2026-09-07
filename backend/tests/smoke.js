@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.SMALLWORLD_SMOKE_PORT || 19000 + Math.floor(Math.random() * 1000));
 const dataFile = path.join(os.tmpdir(), `smallworld-smoke-${Date.now()}.json`);
+const registryFile = `${dataFile}.merchant-registry`;
 const baseUrl = `http://127.0.0.1:${port}`;
 
 function wait(ms) {
@@ -60,7 +61,8 @@ async function main() {
       ...process.env,
       SMALLWORLD_BACKEND_HOST: '127.0.0.1',
       SMALLWORLD_BACKEND_PORT: String(port),
-      SMALLWORLD_DATA_FILE: dataFile
+      SMALLWORLD_DATA_FILE: dataFile,
+      SMALLWORLD_MERCHANT_REGISTRY_FILE: registryFile
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -616,29 +618,49 @@ async function main() {
     assert(placeRating.body.summary && Number.isFinite(placeRating.body.summary.trustScore), 'place rating summary missing');
     assert(Array.isArray(placeRating.body.dimensions) && placeRating.body.dimensions.length === 5, 'place rating dimensions missing');
 
+    const forgedTap = await request('/api/merchant/taps', {
+      method: 'POST', headers: authHeaders(token),
+      body: JSON.stringify({ placeId: 'coffee', merchantId: 'forged', hardwareVerified: true })
+    });
+    assert(forgedTap.response.status === 400, 'old demo requests must not create merchant evidence');
+    const deniedTerminal = await request('/api/merchant/terminals/sessions', {
+      method: 'POST', headers: authHeaders(token), body: JSON.stringify({ merchantId: 'shop' })
+    });
+    assert(deniedTerminal.response.status === 403, 'unregistered terminal must be denied');
+    // Operator-only fixture in a temporary file; no HTTP endpoint grants merchant status.
+    fs.writeFileSync(registryFile, JSON.stringify([{ merchantId: 'shop', placeId: 'coffee', accountId: reader.body.user.id, deviceId: 'reader-device', active: true }]));
+    async function merchantProof() {
+      const issued = await request('/api/merchant/terminals/sessions', {
+        method: 'POST', headers: authHeaders(reader.body.token), body: JSON.stringify({ merchantId: 'shop' })
+      });
+      assert(issued.response.status === 201, `terminal issue failed: ${JSON.stringify(issued.body)}`);
+      const payload = { ...issued.body.payload, challenge: 'abcdef123456abcdef123456', transport: 'nfc-isodep' };
+      const observed = await request(`/api/merchant/terminals/sessions/${payload.sessionId}/observe`, {
+        method: 'POST', headers: authHeaders(reader.body.token), body: JSON.stringify({ challenge: payload.challenge })
+      });
+      assert(observed.response.ok, 'terminal observation failed');
+      return payload;
+    }
+    const proof = await merchantProof();
     const merchantTap = await request('/api/merchant/taps', {
       method: 'POST',
       headers: authHeaders(token),
-      body: JSON.stringify({
-        placeId: 'coffee',
-        deviceId: 'consumer-phone',
-        merchantDeviceId: 'market-lane-terminal',
-        merchantId: 'merchant-market-lane'
-      })
+      body: JSON.stringify(proof)
     });
     assert(merchantTap.response.status === 201, `merchant tap failed: ${JSON.stringify(merchantTap.body)}`);
     assert(merchantTap.body.contract === 'SmallWorld Merchant Tap v1', 'merchant tap contract marker missing');
     assert(merchantTap.body.guardrails && merchantTap.body.guardrails.separatedFromPhoneToPhoneProof === true, 'merchant tap guardrails missing');
     const tapId = merchantTap.body.tap.id;
+    const tapRetries = await Promise.all(Array.from({ length: 6 }, () => request('/api/merchant/taps', {
+      method: 'POST', headers: authHeaders(token), body: JSON.stringify(proof)
+    })));
+    assert(tapRetries.every(result => result.response.status === 200 && result.body.tap.id === tapId), 'merchant claim retries must return the same tap');
+    assert(merchantTap.body.tap.hardwareVerified === false && merchantTap.body.tap.gpsVerified === false, 'client reports are not hardware/GPS attestations');
 
     const merchantConflict = await request('/api/merchant/taps', {
       method: 'POST',
-      headers: authHeaders(token),
-      body: JSON.stringify({
-        placeId: 'coffee',
-        deviceId: 'forged-device',
-        merchantDeviceId: 'smoke-device'
-      })
+      headers: authHeaders(reader.body.token),
+      body: JSON.stringify(proof)
     });
     assert(merchantConflict.response.status === 409, 'merchant tap should reject same consumer and merchant device');
 
@@ -704,7 +726,7 @@ async function main() {
     const gateTap = await request('/api/merchant/taps', {
       method: 'POST',
       headers: authHeaders(token),
-      body: JSON.stringify({ placeId: 'coffee', deviceId: 'consumer-phone-2', merchantDeviceId: 'market-lane-terminal', merchantId: 'merchant-market-lane' })
+      body: JSON.stringify(await merchantProof())
     });
     assert(gateTap.response.status === 201, `gate tap failed: ${JSON.stringify(gateTap.body)}`);
     const earlyPlaceReview = await request(`/api/merchant/taps/${encodeURIComponent(gateTap.body.tap.id)}/place-reviews`, {
@@ -746,6 +768,7 @@ async function main() {
     if (fs.existsSync(dataFile)) {
       fs.rmSync(dataFile, { force: true });
     }
+    if (fs.existsSync(registryFile)) fs.rmSync(registryFile, { force: true });
   }
 }
 

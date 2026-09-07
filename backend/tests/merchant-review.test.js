@@ -2,12 +2,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const service = require('../src/modules/merchant-tap/merchant-tap.service');
+const terminal = require('../src/modules/merchant-tap/merchant-terminal.service');
 
 function setup() {
   let writes = 0;
   let serial = 0;
   const data = { merchantTaps: [{ id: 'tap', userId: 'buyer', placeId: 'coffee', checkinAt: new Date().toISOString(), status: 'checked-in' }], merchantPlaceReviews: [], merchantMedals: [], userPoints: { buyer: 0 } };
   const options = { createId: prefix => `${prefix}-${++serial}`, persist: () => writes++, pickPlace: () => ({ id: 'coffee', name: 'Coffee' }) };
+  options.registry = [{ merchantId: 'shop', placeId: 'coffee', accountId: 'merchant', deviceId: 'terminal', active: true }];
+  data.merchantTaps[0] = { ...data.merchantTaps[0], sessionId: 'session', merchantId: 'shop', deviceId: 'buyer-device', verificationLevel: terminal.LEVEL };
+  data.merchantTerminalSessions = [{ id: 'session', tapId: 'tap', status: 'consumed', readerUserId: 'buyer', readerDeviceId: 'buyer-device', hostUserId: 'merchant', hostDeviceId: 'terminal', placeId: 'coffee', merchantId: 'shop' }];
   const account = { id: 'buyer' };
   const body = { stars: 5, tags: ['安静', '干净'], comment: '  不错  ' };
   return { data, options, account, body, writes: () => writes };
@@ -76,6 +80,8 @@ test('different taps at same place on same UTC day do not multiply rewards', () 
   const f = setup();
   service.merchantPlaceReview(f.data, f.account, 'tap', f.body, f.options);
   f.data.merchantTaps.push({ ...f.data.merchantTaps[0], id: 'tap-2', reward: undefined, placeReviewId: undefined });
+  f.data.merchantTaps[1].sessionId = 'session-2';
+  f.data.merchantTerminalSessions.push({ ...f.data.merchantTerminalSessions[0], id: 'session-2', tapId: 'tap-2' });
   const second = service.merchantPlaceReview(f.data, f.account, 'tap-2', f.body, f.options);
   assert.equal(second.status, 201);
   assert.equal(second.body.reward.reason, 'DAILY_PLACE_LIMIT');
@@ -110,7 +116,9 @@ test('daily cap is per account and place; old-day rewards do not block a new day
     { id: 'other-user', userId: 'other', placeId: 'coffee' }
   ];
   for (const entry of cases) {
-    f.data.merchantTaps.push({ ...entry, checkinAt: new Date().toISOString() });
+    f.options.registry.push({ merchantId: entry.id, placeId: entry.placeId, accountId: 'merchant', deviceId: 'terminal', active: true });
+    f.data.merchantTaps.push({ ...entry, sessionId: entry.id, merchantId: entry.id, deviceId: 'buyer-device', verificationLevel: terminal.LEVEL, checkinAt: new Date().toISOString() });
+    f.data.merchantTerminalSessions.push({ ...f.data.merchantTerminalSessions[0], id: entry.id, tapId: entry.id, merchantId: entry.id, placeId: entry.placeId, readerUserId: entry.userId });
     const result = service.merchantPlaceReview(f.data, { id: entry.userId }, entry.id, f.body, f.options);
     assert.equal(result.body.reward.points.awarded, 5);
   }
@@ -136,7 +144,7 @@ test('route reads the data snapshot only after request body finishes', async () 
     send: (_res, status, body) => { result = { status, body }; },
     ...f.options
   });
-  assert.equal(result.status, 200);
+  // The route uses the operator file, not options.registry from the caller.
+  assert.equal(result.status, 403);
   assert.equal(f.writes(), 1);
-  assert.equal(result.body.reward.points.awarded, 5);
 });

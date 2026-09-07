@@ -1,4 +1,5 @@
 const { createChainAnchor } = require('../../shared/chainAnchor');
+const terminal = require('./merchant-terminal.service');
 
 const MERCHANT_TAP_CONTRACT = 'SmallWorld Merchant Tap v1';
 
@@ -84,10 +85,10 @@ function merchantGuardrails() {
     itemReviewScope: 'consumed-item',
     paymentAvailable: false,
     itemReviewAvailable: false,
-    merchantIdentityVerified: false,
+    merchantRegistrationRequired: true,
     hardwareAttested: false,
     gpsVerified: false,
-    verificationLevel: 'demo-unverified',
+    verificationLevel: terminal.LEVEL,
     productionReady: false
   };
 }
@@ -100,10 +101,10 @@ function publicMerchantTap(data, tap, options = {}) {
   return {
     ...tap,
     // Legacy demo records may contain hardwareVerified=true. Never present it
-    // as an attestation: this module has not yet integrated a trusted terminal.
+    // as an attestation: even registered terminals only report client exchanges.
     hardwareVerified: false,
     gpsVerified: false,
-    verificationLevel: 'demo-unverified',
+    verificationLevel: terminal.hasEvidence(data, tap, options) ? terminal.LEVEL : 'legacy-unverified',
     place: place ? {
       id: place.id,
       name: place.name,
@@ -135,48 +136,14 @@ function listMerchantTaps(data, account, options = {}) {
 }
 
 function createMerchantTap(data, account, body, options) {
-  const place = options.pickPlace(data, body.placeId || 'coffee');
-  if (!place) {
-    return { status: 404, body: { error: 'PLACE_NOT_FOUND', message: '商家地点不存在' } };
-  }
-
-  const deviceId = String(body.deviceId || '').slice(0, 120);
-  const merchantDeviceId = String(body.merchantDeviceId || 'merchant-nfc-device').slice(0, 120);
-  if (!merchantDeviceId) {
-    return { status: 400, body: { error: 'MERCHANT_DEVICE_REQUIRED', message: '商家 NFC 设备 ID 缺失' } };
-  }
-  if (deviceId && deviceId === merchantDeviceId) {
-    return { status: 409, body: { error: 'MERCHANT_DEVICE_CONFLICT', message: '用户手机和商家设备不能是同一个设备' } };
-  }
-
-  const tap = {
-    id: options.createId('merchant_tap'),
-    placeId: place.id,
-    userId: account.id,
-    deviceId,
-    merchantDeviceId,
-    merchantId: String(body.merchantId || place.id).slice(0, 80),
-    transport: String(body.transport || 'merchant_nfc'),
-    hardwareVerified: false,
-    gpsVerified: false,
-    verificationLevel: 'demo-unverified',
-    status: 'demo-created',
-    createdAt: new Date().toISOString()
-  };
-
-  arrayOf(data, 'merchantTaps').push(tap);
-  options.persist(data);
-
-  return {
-    status: 201,
-    body: {
-      contract: MERCHANT_TAP_CONTRACT,
-      message: '已创建商家流程演示记录，尚未验证商家身份、NFC 或 GPS',
-      tap: publicMerchantTap(data, tap, options),
-      place: options.enrichPlace(data, place),
-      guardrails: merchantGuardrails()
-    }
-  };
+  const result = terminal.claim(data, account, body, options);
+  if (!result.tap) return result;
+  return { status: result.status, body: {
+    contract: MERCHANT_TAP_CONTRACT,
+    message: '已核对登记终端的双方交换记录；不代表硬件认证或 GPS 核验',
+    tap: publicMerchantTap(data, result.tap, options),
+    guardrails: merchantGuardrails()
+  } };
 }
 
 function requireMerchantTap(data, account, tapId) {
@@ -189,6 +156,13 @@ function merchantCheckin(data, account, tapId, options) {
     return { status: 404, body: { error: 'TAP_NOT_FOUND', message: '商家碰一碰记录不存在' } };
   }
 
+  if (!terminal.hasEvidence(data, tap, options)) {
+    return { status: 403, body: { error: 'MERCHANT_EVIDENCE_REQUIRED', message: '需要有效登记终端的碰触凭证；旧演示记录不能打卡' } };
+  }
+  if (!hasCheckin(tap) && !(Date.parse(tap.evidenceExpiresAt) > Date.now())) {
+    return { status: 409, body: { error: 'EVIDENCE_EXPIRED', message: '到店凭证已过期，请重新碰触商家终端' } };
+  }
+
   if (!hasCheckin(tap)) {
     tap.checkinAt = new Date().toISOString();
     tap.status = 'checked-in';
@@ -199,7 +173,7 @@ function merchantCheckin(data, account, tapId, options) {
     status: 200,
     body: {
       contract: MERCHANT_TAP_CONTRACT,
-      message: '演示打卡已记录，不代表已核验真实到场',
+      message: '已根据登记终端交换记录打卡；未进行硬件认证或 GPS 核验',
       tap: publicMerchantTap(data, tap, options),
       guardrails: merchantGuardrails()
     }
@@ -250,6 +224,9 @@ function merchantPlaceReview(data, account, tapId, body, options) {
   if (!tap) {
     return { status: 404, body: { error: 'TAP_NOT_FOUND', message: '商家碰一碰记录不存在' } };
   }
+  if (!terminal.hasEvidence(data, tap, options)) {
+    return { status: 403, body: { error: 'MERCHANT_EVIDENCE_REQUIRED', message: '商家凭证无效或终端登记已撤销，不能发布评价' } };
+  }
   if (!hasCheckin(tap)) {
     return { status: 403, body: { error: 'CHECKIN_REQUIRED', message: '到店打卡后才可评价地点，更可信' } };
   }
@@ -295,7 +272,7 @@ function merchantPlaceReview(data, account, tapId, body, options) {
     status: 201,
     body: {
       contract: MERCHANT_TAP_CONTRACT,
-      message: '演示评价已保存；未核验真实到场，徽章不是已上链 NFT',
+      message: '评价已保存，凭证来自登记终端的双方交换记录；徽章尚未上链',
       review,
       reward,
       tap: publicMerchantTap(data, tap, options),

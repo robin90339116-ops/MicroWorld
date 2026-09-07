@@ -422,7 +422,7 @@ struct Index {
   @State nfcKind: string = 'personal';
   @State merchantName: string = 'Market Lane Coffee';
   @State merchantTapId: string = '';
-  @State merchantStatus: string = '商家流程暂为演示，未接入真实商家认证与 NFC 门贴验证';
+  @State merchantStatus: string = '商家端登记与凭证校验已在服务端实现，App 商家 NFC 接入仍在开发；暂不能打卡';
   @State merchantCheckedIn: boolean = false;
   @State merchantPaid: boolean = false;
   @State merchantStars: number = 5;
@@ -1720,31 +1720,7 @@ struct Index {
 
   // ----- 商家碰一碰(碰门贴 → 打卡/支付 → 评价地点/物品 → 纪念徽章)-----
   private async startMerchantTap(): Promise<void> {
-    if (this.authToken.length === 0) {
-      this.merchantStatus = '登录后才能进行商家碰一碰';
-      return;
-    }
-    try {
-      const body: MerchantTapBody = {
-        placeId: this.currentPlace().id,
-        deviceId: this.nfcDeviceId,
-        merchantDeviceId: 'merchant-' + this.currentPlace().id + '-nfc',
-        merchantId: 'merchant-' + this.currentPlace().id
-      };
-      const response = await this.apiPost('/api/merchant/taps', body);
-      const tap = this.mapValue(response['tap']);
-      this.merchantTapId = this.textValue(tap['id']);
-      const place = this.mapValue(tap['place']);
-      this.merchantName = this.textValue(place['shortName'], this.textValue(place['name'], this.merchantName));
-      this.merchantCheckedIn = false;
-      this.merchantPaid = false;
-      this.merchantTags = [];
-      this.merchantStars = 5;
-      this.merchantStatus = '商家流程演示：未核验商家身份、NFC 或 GPS，不代表真实到场';
-      this.go('merchantAction');
-    } catch (error) {
-      this.merchantStatus = '商家碰一碰失败：' + String(error);
-    }
+    this.merchantStatus = '商家凭证服务端已就绪；本页的商家端 HCE 与消费者读取流程尚未接入，暂不能开始打卡。旧演示入口已关闭。';
   }
 
   private async doMerchantCheckin(): Promise<void> {
@@ -4002,7 +3978,7 @@ struct Index {
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%');
-                Text('演示商家 · 未认证')
+                Text('尚未读取商家终端')
                   .fontSize(12)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(C_DEEP)
@@ -4026,7 +4002,7 @@ struct Index {
           .borderRadius(16)
           .margin({ top: 18 });
 
-          Button('体验商家流程（演示）')
+          Button('商家碰一碰暂未开放 · 查看说明')
             .width('100%')
             .height(54)
             .fontSize(16)
