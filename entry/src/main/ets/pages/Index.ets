@@ -180,11 +180,20 @@ interface NfcConfirmBody {
 }
 
 interface MerchantTapBody {
-  placeId: string;
-  deviceId: string;
-  merchantDeviceId: string;
-  merchantId: string;
+  purpose: string;
+  sessionId: string;
+  touchToken: string;
+  challenge: string;
+  transport: string;
 }
+
+interface MerchantTerminalOption {
+  merchantId: string;
+  placeId: string;
+}
+
+interface MerchantTerminalIssueBody { merchantId: string; }
+interface MerchantChallengeBody { challenge: string; }
 
 interface MerchantPayBody {
   itemName: string;
@@ -422,7 +431,16 @@ struct Index {
   @State nfcKind: string = 'personal';
   @State merchantName: string = 'Market Lane Coffee';
   @State merchantTapId: string = '';
-  @State merchantStatus: string = '商家端登记与凭证校验已在服务端实现，App 商家 NFC 接入仍在开发；暂不能打卡';
+  @State merchantStatus: string = '消费者选择读取；已登记商家选择开启终端。双方均需登录并保持此页打开。';
+  @State merchantBusy: boolean = false;
+  @State merchantCanConfirm: boolean = false;
+  @State merchantCanReport: boolean = false;
+  @State merchantTerminals: MerchantTerminalOption[] = [];
+  private merchantGeneration: number = 0;
+  private merchantPending: NfcPeerPayload | null = null;
+  private merchantHostSession: string = '';
+  private merchantChallenge: string = '';
+  private merchantTimer: number = -1;
   @State merchantCheckedIn: boolean = false;
   @State merchantPaid: boolean = false;
   @State merchantStars: number = 5;
@@ -1429,6 +1447,11 @@ struct Index {
       (payload: NfcPeerPayload) => {
         this.nfcManager.stopReader();
         this.nfcActive = false;
+        if (payload.purpose === 'merchant') {
+          this.nfcStatus = '这是商家终端，请切换到个人 ↔ 商家读取';
+          this.nfcStep = 'idle';
+          return;
+        }
         this.nfcPending = payload;
         this.nfcSessionId = payload.sessionId;
         this.nfcStep = 'sense';
@@ -1590,6 +1613,7 @@ struct Index {
   }
 
   private stopNfc(): void {
+    this.stopMerchantNfc();
     this.nfcGeneration += 1;
     if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
     this.nfcTimer = -1;
@@ -1720,20 +1744,162 @@ struct Index {
 
   // ----- 商家碰一碰(碰门贴 → 打卡/支付 → 评价地点/物品 → 纪念徽章)-----
   private async startMerchantTap(): Promise<void> {
-    this.merchantStatus = '商家凭证服务端已就绪；本页的商家端 HCE 与消费者读取流程尚未接入，暂不能开始打卡。旧演示入口已关闭。';
+    if (!this.authToken) { this.merchantStatus = '请先登录'; return; }
+    this.stopNfc();
+    const generation = this.merchantGeneration;
+    this.merchantStatus = '请靠近已开启终端的商家手机；不支持直接读取普通静态门贴';
+    const active = this.nfcManager.startReader((payload: NfcPeerPayload) => {
+      if (generation !== this.merchantGeneration) return;
+      this.nfcManager.stopReader();
+      if (payload.purpose !== 'merchant') {
+        this.merchantStatus = '这不是商家凭证，请让商家开启已登记终端';
+        return;
+      }
+      this.merchantPending = payload;
+      this.merchantCanConfirm = true;
+      this.merchantStatus = '已读取商家交换凭证，点击确认后由服务器核对商家登记与双方记录';
+    }, (message: string) => {
+      if (generation === this.merchantGeneration) this.merchantStatus = message;
+    });
+    if (active) this.armMerchantTimeout(generation);
+  }
+
+  private stopMerchantNfc(): void {
+    this.merchantGeneration += 1;
+    if (this.merchantTimer !== -1) clearTimeout(this.merchantTimer);
+    this.merchantTimer = -1;
+    this.nfcManager.stop();
+    this.merchantBusy = false;
+    this.merchantCanConfirm = false;
+    this.merchantCanReport = false;
+    this.merchantPending = null;
+    this.merchantHostSession = '';
+    this.merchantChallenge = '';
+    this.merchantTerminals = [];
+  }
+
+  private armMerchantTimeout(generation: number): void {
+    if (this.merchantTimer !== -1) clearTimeout(this.merchantTimer);
+    this.merchantTimer = setTimeout(() => {
+      if (generation !== this.merchantGeneration) return;
+      this.nfcManager.stop();
+      this.merchantTimer = -1;
+      this.merchantStatus = '本机 NFC 已停止；可重试已提交的记录，未完成会话需重新发起';
+    }, 120000);
+  }
+
+  private async loadMerchantTerminals(): Promise<void> {
+    if (!this.authToken) { this.merchantStatus = '请登录已登记的商家账号'; return; }
+    this.stopNfc();
+    const generation = this.merchantGeneration;
+    this.merchantBusy = true;
+    try {
+      const response = await this.apiGet('/api/merchant/terminals');
+      if (generation !== this.merchantGeneration) return;
+      const rows = response['terminals'] as Object[];
+      this.merchantTerminals = Array.isArray(rows) ? rows.map((value: Object): MerchantTerminalOption => {
+        const row = this.mapValue(value);
+        return { merchantId: this.textValue(row['merchantId']), placeId: this.textValue(row['placeId']) };
+      }) : [];
+      this.merchantStatus = this.merchantTerminals.length > 0 ? '选择要开启的已登记终端' :
+        '此账号与当前设备未登记。请由管理员核对账号和设备后登记，不支持自行认证。';
+    } catch (error) {
+      if (generation === this.merchantGeneration) this.merchantStatus = '终端列表加载失败：' + String(error);
+    } finally { if (generation === this.merchantGeneration) this.merchantBusy = false; }
+  }
+
+  private async startMerchantHost(merchantId: string): Promise<void> {
+    if (this.merchantBusy) return;
+    this.stopNfc();
+    const generation = this.merchantGeneration;
+    this.merchantBusy = true;
+    try {
+      const body: MerchantTerminalIssueBody = { merchantId: merchantId };
+      const response = await this.apiPost('/api/merchant/terminals/sessions', body);
+      if (generation !== this.merchantGeneration) return;
+      const raw = this.mapValue(response['payload']);
+      const payload: NfcHostPayload = {
+        purpose: this.textValue(raw['purpose']), sessionId: this.textValue(raw['sessionId']),
+        touchToken: this.textValue(raw['touchToken']), placeId: this.textValue(raw['placeId']),
+        hostUserId: this.textValue(raw['hostUserId']), expiresAt: this.textValue(raw['expiresAt'])
+      };
+      if (payload.purpose !== 'merchant' || !payload.sessionId || !payload.touchToken) throw new Error('终端响应无效');
+      this.merchantHostSession = payload.sessionId;
+      this.merchantStatus = '终端已开启，等待消费者手机靠近；两分钟内有效';
+      const active = this.nfcManager.startHost(payload, (message: string) => {
+        if (generation === this.merchantGeneration) this.merchantStatus = message;
+      }, (challenge: string) => {
+        if (generation !== this.merchantGeneration) return;
+        this.merchantChallenge = challenge;
+        this.merchantCanReport = true;
+        this.reportMerchantExchange();
+      });
+      if (active) this.armMerchantTimeout(generation);
+    } catch (error) {
+      if (generation === this.merchantGeneration) this.merchantStatus = '开启终端失败：' + String(error);
+    } finally { if (generation === this.merchantGeneration) this.merchantBusy = false; }
+  }
+
+  private async reportMerchantExchange(): Promise<void> {
+    if (this.merchantBusy || !this.merchantHostSession || !this.merchantChallenge) return;
+    const generation = this.merchantGeneration;
+    this.merchantBusy = true;
+    try {
+      const body: MerchantChallengeBody = { challenge: this.merchantChallenge };
+      await this.apiPost('/api/merchant/terminals/sessions/' + encodeURIComponent(this.merchantHostSession) + '/observe', body);
+      if (generation !== this.merchantGeneration) return;
+      this.merchantCanReport = false;
+      this.merchantStatus = '交换记录已上报，请消费者确认；这不是支付成功或硬件认证结果';
+    } catch (error) {
+      if (generation === this.merchantGeneration) this.merchantStatus = '上报未完成，可重试：' + String(error);
+    } finally { if (generation === this.merchantGeneration) this.merchantBusy = false; }
+  }
+
+  private async confirmMerchantTap(): Promise<void> {
+    const payload = this.merchantPending;
+    if (this.merchantBusy || payload === null) return;
+    const generation = this.merchantGeneration;
+    this.merchantBusy = true;
+    try {
+      const body: MerchantTapBody = { purpose: 'merchant', sessionId: payload.sessionId,
+        touchToken: payload.touchToken, challenge: payload.challenge, transport: 'nfc-isodep' };
+      const response = await this.apiPost('/api/merchant/taps', body);
+      if (generation !== this.merchantGeneration) return;
+      const tap = this.mapValue(response['tap']);
+      const tapId = this.textValue(tap['id']);
+      if (!tapId) throw new Error('服务端未返回到店凭证');
+      const place = this.mapValue(tap['place']);
+      this.merchantTapId = tapId;
+      this.merchantName = this.textValue(place['shortName'], this.textValue(place['name'], '登记商家'));
+      this.merchantCheckedIn = this.textValue(tap['checkinAt']).length > 0;
+      this.merchantPaid = false;
+      this.merchantStars = 5;
+      this.merchantTags = [];
+      this.merchantPlaceComment = '';
+      this.merchantItemComment = '';
+      this.merchantStatus = this.textValue(response['message']);
+      this.go('merchantAction');
+    } catch (error) {
+      if (generation === this.merchantGeneration) this.merchantStatus = '凭证确认未完成，可重试原记录：' + String(error);
+    } finally { if (generation === this.merchantGeneration) this.merchantBusy = false; }
   }
 
   private async doMerchantCheckin(): Promise<void> {
-    if (this.merchantTapId.length === 0) {
+    if (this.merchantTapId.length === 0 || this.merchantBusy) {
       return;
     }
+    const tapId = this.merchantTapId;
+    const userId = this.currentUserId;
+    const generation = this.merchantGeneration;
+    this.merchantBusy = true;
     try {
-      await this.apiPost('/api/merchant/taps/' + this.merchantTapId + '/checkin', {} as Record<string, Object>);
+      await this.apiPost('/api/merchant/taps/' + encodeURIComponent(tapId) + '/checkin', {} as Record<string, Object>);
+      if (generation !== this.merchantGeneration || userId !== this.currentUserId || tapId !== this.merchantTapId || this.page !== 'merchantAction') return;
       this.merchantCheckedIn = true;
-      this.merchantStatus = '演示打卡已记录，尚未核验真实到场';
+      this.merchantStatus = '已凭登记终端交换记录打卡；未进行硬件认证或 GPS 核验';
     } catch (error) {
-      this.merchantStatus = '打卡失败：' + String(error);
-    }
+      if (generation === this.merchantGeneration && userId === this.currentUserId) this.merchantStatus = '打卡失败：' + String(error);
+    } finally { if (generation === this.merchantGeneration) this.merchantBusy = false; }
   }
 
   private async doMerchantPay(): Promise<void> {
@@ -1750,12 +1916,17 @@ struct Index {
   }
 
   private async submitMerchantPlaceReview(): Promise<void> {
-    if (this.merchantTapId.length === 0) {
+    if (this.merchantTapId.length === 0 || this.merchantBusy) {
       return;
     }
+    const tapId = this.merchantTapId;
+    const userId = this.currentUserId;
+    const generation = this.merchantGeneration;
+    this.merchantBusy = true;
     try {
       const body: MerchantReviewBody = { stars: this.merchantStars, tags: this.merchantTags, comment: this.merchantPlaceComment.trim() };
       const response = await this.apiPost('/api/merchant/taps/' + this.merchantTapId + '/place-reviews', body);
+      if (generation !== this.merchantGeneration || userId !== this.currentUserId || tapId !== this.merchantTapId || this.page !== 'merchantRatePlace') return;
       const reward = this.mapValue(response['reward']);
       const medal = this.mapValue(reward['medal']);
       const points = this.mapValue(reward['points']);
@@ -1763,13 +1934,13 @@ struct Index {
         this.textValue(medal['name']) + ' · 未上链凭证 · ' + this.textValue(medal['tokenId']) : '本次未发放新徽章';
       this.merchantRewardPoints = '+' + this.numberText(points['awarded'], '0') + ' · 当次结算余额 ' + this.numberText(points['total'], '0');
       this.merchantRewardText = this.textValue(reward['reason']) === 'DAILY_PLACE_LIMIT' ?
-        '评价已保存；同一账号在同一地点每日（UTC）仅奖励一次。本流程仍为演示。' :
+        '评价已保存；同一账号在同一地点每日（UTC）仅奖励一次。' :
         this.textValue(response['message'], '评价已保存；暂无可恢复的奖励快照，不会补发重复奖励。');
       this.merchantTags = [];
       this.go('merchantReward');
     } catch (error) {
-      this.merchantStatus = '评价提交失败：' + String(error);
-    }
+      if (generation === this.merchantGeneration && userId === this.currentUserId) this.merchantStatus = '评价提交失败：' + String(error);
+    } finally { if (generation === this.merchantGeneration) this.merchantBusy = false; }
   }
 
   private async submitMerchantItemReview(): Promise<void> {
@@ -1817,6 +1988,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    this.stopMerchantNfc();
     this.stopChatPolling();
     this.nfcManager.stop();
     if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
@@ -4002,7 +4174,8 @@ struct Index {
           .borderRadius(16)
           .margin({ top: 18 });
 
-          Button('商家碰一碰暂未开放 · 查看说明')
+          Button('消费者 · 读取商家手机')
+            .enabled(!this.merchantBusy)
             .width('100%')
             .height(54)
             .fontSize(16)
@@ -4012,6 +4185,24 @@ struct Index {
             .borderRadius(18)
             .margin({ top: 16 })
             .onClick(() => { this.startMerchantTap(); });
+          Button('商家 · 选择登记终端').enabled(!this.merchantBusy)
+            .margin({ top: 12 }).onClick(() => { this.loadMerchantTerminals(); });
+          ForEach(this.merchantTerminals, (terminal: MerchantTerminalOption) => {
+            Button(terminal.merchantId + ' · ' + terminal.placeId).enabled(!this.merchantBusy)
+              .margin({ top: 10 }).onClick(() => { this.startMerchantHost(terminal.merchantId); });
+          }, (terminal: MerchantTerminalOption) => terminal.merchantId);
+          if (this.merchantCanConfirm) {
+            Button('确认 / 重试到店凭证').enabled(!this.merchantBusy)
+              .margin({ top: 12 }).onClick(() => { this.confirmMerchantTap(); });
+          }
+          if (this.merchantCanReport) {
+            Button('重试上报交换记录').enabled(!this.merchantBusy)
+              .margin({ top: 12 }).onClick(() => { this.reportMerchantExchange(); });
+          }
+          Button('停止本机 NFC').margin({ top: 12 }).onClick(() => {
+            this.stopNfc();
+            this.merchantStatus = '本机已停止；服务端未兑换会话仍将在两分钟内过期，不代表已撤销已提交结果';
+          });
         }
 
         Text('真机说明：碰一碰依赖 NFC，需支持 NFC 的鸿蒙真机贴靠商家设备/门贴测试，模拟器无法验证。')
@@ -4038,7 +4229,7 @@ struct Index {
       .textAlign(TextAlign.Center)
       .backgroundColor(this.nfcKind === kind ? C_DEEP : Color.Transparent)
       .borderRadius(10)
-      .onClick(() => { this.nfcKind = kind; });
+      .onClick(() => { if (this.nfcKind !== kind) { this.stopNfc(); this.nfcKind = kind; } });
   }
 
   @Builder
@@ -4304,7 +4495,7 @@ struct Index {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%');
-            Text('流程演示 · 未核验真实到场')
+            Text('登记终端交换凭证 · 未核验 GPS')
               .fontSize(12)
               .fontColor(C_DEEP)
               .margin({ top: 4 });
@@ -4327,7 +4518,7 @@ struct Index {
           .width('100%')
           .margin({ top: 20, bottom: 10 });
         Row() {
-          this.MerchantActionCard('演示打卡', '不代表真实到场', this.merchantCheckedIn, false, () => { this.doMerchantCheckin(); });
+          this.MerchantActionCard('到店打卡', '凭登记终端交换记录', this.merchantCheckedIn, false, () => { this.doMerchantCheckin(); });
           this.MerchantActionCard('支付未开通', '点击查看说明 · 不会扣款', false, true, () => { this.doMerchantPay(); });
         }
         .width('100%');
@@ -4563,7 +4754,7 @@ struct Index {
             .lineHeight(22)
             .textAlign(TextAlign.Center)
             .margin({ top: 10 });
-          Text('演示奖励 · 非已上链 NFT')
+          Text('数字凭证奖励 · 非已上链 NFT')
             .fontSize(12)
             .fontColor(C_MUTED)
             .margin({ top: 6 });

@@ -10,6 +10,7 @@ export interface NfcElementName {
 }
 
 export interface NfcHostPayload {
+  purpose?: string;
   sessionId: string;
   touchToken: string;
   placeId: string;
@@ -18,6 +19,7 @@ export interface NfcHostPayload {
 }
 
 export interface NfcPeerPayload {
+  purpose?: string;
   sessionId: string;
   touchToken: string;
   placeId: string;
@@ -33,8 +35,10 @@ const STATUS_COMMAND_NOT_SUPPORTED: number[] = [0x6D, 0x00];
 export default class NfcPeerManager {
   private elementName: NfcElementName;
   private hceService: cardEmulation.HceService | null = null;
+  private hostGeneration: number = 0;
   private hostPayload: NfcHostPayload | null = null;
   private readerActive: boolean = false;
+  private readerGeneration: number = 0;
   private hostStatus: ((message: string) => void) | null = null;
   private hostExchange: ((challenge: string) => void) | null = null;
   private selectedChallenge: string = '';
@@ -154,7 +158,7 @@ export default class NfcPeerManager {
 
     const challengeLength = command[4];
     if (challengeLength !== 12 || command.length < 5 + challengeLength ||
-      Date.parse(this.hostPayload.expiresAt) <= Date.now()) {
+      !(Date.parse(this.hostPayload.expiresAt) > Date.now())) {
       this.sendHceResponse(STATUS_COMMAND_NOT_SUPPORTED);
       return;
     }
@@ -166,6 +170,7 @@ export default class NfcPeerManager {
     }
     this.selectedChallenge = challenge;
     const peerPayload: NfcPeerPayload = {
+      purpose: this.hostPayload.purpose || 'personal',
       sessionId: this.hostPayload.sessionId,
       touchToken: this.hostPayload.touchToken,
       placeId: this.hostPayload.placeId,
@@ -196,7 +201,10 @@ export default class NfcPeerManager {
         return false;
       }
       this.hceService = new cardEmulation.HceService();
-      this.hceService.on('hceCmd', this.hceCommandCallback);
+      const generation = this.hostGeneration;
+      this.hceService.on('hceCmd', (error: BusinessError, command: number[]) => {
+        if (generation === this.hostGeneration) this.hceCommandCallback(error, command);
+      });
       this.hceService.start(this.elementName, [SMALLWORLD_AID]);
       status('HCE 已启动，请将另一部手机背部靠近');
       return true;
@@ -209,6 +217,7 @@ export default class NfcPeerManager {
   }
 
   stopHost(): void {
+    this.hostGeneration += 1;
     this.hostExchange = null;
     this.selectedChallenge = '';
     if (!this.hceService) {
@@ -236,6 +245,7 @@ export default class NfcPeerManager {
   };
 
   private async readPeerPayload(tagInfo: tag.TagInfo): Promise<void> {
+    const generation = this.readerGeneration;
     let isoDep: tag.IsoDepTag | null = null;
     try {
       isoDep = tag.getIsoDep(tagInfo);
@@ -258,16 +268,16 @@ export default class NfcPeerManager {
       if (payload.challenge !== this.bytesToHex(challenge)) {
         throw new Error('NFC 挑战校验失败');
       }
-      if (Date.parse(payload.expiresAt) < Date.now()) {
+      if (!(Date.parse(payload.expiresAt) > Date.now())) {
         throw new Error('对方的碰触令牌已经过期');
       }
 
-      if (this.readerSuccess) {
+      if (generation === this.readerGeneration && this.readerActive && this.readerSuccess) {
         this.readerSuccess(payload);
       }
     } catch (error) {
       const readError = error as BusinessError;
-      if (this.readerError) {
+      if (generation === this.readerGeneration && this.readerActive && this.readerError) {
         this.readerError('读取失败：' + this.errorText(readError));
       }
     } finally {
@@ -300,6 +310,9 @@ export default class NfcPeerManager {
   }
 
   stopReader(): void {
+    this.readerGeneration += 1;
+    this.readerSuccess = null;
+    this.readerError = null;
     if (!this.readerActive) {
       return;
     }
