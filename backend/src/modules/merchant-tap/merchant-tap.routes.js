@@ -16,6 +16,19 @@ async function handleMerchantTapRoutes({
 }) {
   const options = { pickPlace, enrichPlace, createId, persist };
 
+  const sessionStatus = url.pathname.match(/^\/api\/merchant\/terminals\/sessions\/([^/]+)$/);
+  const sessionCancel = url.pathname.match(/^\/api\/merchant\/terminals\/sessions\/([^/]+)\/cancel$/);
+  if ((req.method === 'GET' && sessionStatus) || (req.method === 'POST' && sessionCancel)) {
+    const body = req.method === 'POST' ? await readBody(req) : {};
+    const data = readData();
+    const auth = authenticate(data, req);
+    if (!auth) { send(res, 401, { error: 'AUTH_REQUIRED', message: '请先登录' }); return true; }
+    const result = sessionCancel ? terminalService.cancel(data, auth.account, auth.session.deviceId, sessionCancel[1], body, options) :
+      terminalService.status(data, auth.account, auth.session.deviceId, sessionStatus[1], options);
+    send(res, result.status, result.body);
+    return true;
+  }
+
   const terminalObserve = url.pathname.match(/^\/api\/merchant\/terminals\/sessions\/([^/]+)\/observe$/);
   if ((req.method === 'GET' && url.pathname === '/api/merchant/terminals') ||
       (req.method === 'POST' && (url.pathname === '/api/merchant/terminals/sessions' || terminalObserve))) {

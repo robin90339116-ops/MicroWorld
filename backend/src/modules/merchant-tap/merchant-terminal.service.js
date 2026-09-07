@@ -124,4 +124,57 @@ function hasEvidence(data, tap, options) {
     tap.verificationLevel === LEVEL);
 }
 
-module.exports = { LEVEL, listTerminals, issue, observe, claim, hasEvidence, registry };
+function participant(session, account, deviceId) {
+  if (session.hostUserId === account.id && session.hostDeviceId === deviceId) return 'host';
+  if (session.readerUserId === account.id && session.readerDeviceId === deviceId) return 'reader';
+  return '';
+}
+
+function snapshot(data, session, role, options) {
+  const active = Boolean(registration(session, options));
+  const status = session.status === 'waiting' ? (!active ? 'revoked' :
+    !(Date.parse(session.expiresAt) > Date.now()) ? 'expired' : 'waiting') : session.status;
+  const tap = (data.merchantTaps || []).find(row => row.id === session.tapId);
+  const place = options.pickPlace(data, session.placeId);
+  return { session: {
+    id: session.id, role, status, expiresAt: session.expiresAt, merchantId: session.merchantId,
+    placeId: session.placeId, placeName: place?.shortName || place?.name || session.placeId,
+    registrationActive: active, observed: Boolean(session.challenge), tapId: tap?.id || '',
+    checkedIn: Boolean(tap?.checkinAt), reviewed: Boolean(tap?.placeReviewId),
+    // Merchant can see workflow progress, not the customer's account, review or balance.
+    reward: role === 'reader' ? tap?.reward || null : null,
+    hardwareVerified: false, gpsVerified: false
+  } };
+}
+
+function status(data, account, deviceId, sessionId, options) {
+  const session = entries(data).find(row => row.id === sessionId);
+  const role = session && participant(session, account, deviceId);
+  if (!role) return fail(404, 'SESSION_NOT_FOUND', '商家会话不存在或当前账号设备无权访问');
+  return { status: 200, body: snapshot(data, session, role, options) };
+}
+
+function cancel(data, account, deviceId, sessionId, body, options) {
+  const session = entries(data).find(row => row.id === sessionId);
+  if (!session) return fail(404, 'SESSION_NOT_FOUND', '商家会话不存在');
+  let role = participant(session, account, deviceId);
+  // A reader may cancel before claiming only with the bearer token it read via NFC.
+  // Cancel never creates evidence, a relationship, a checkin or a reward.
+  if (!role && account.id !== session.hostUserId && deviceId && deviceId !== session.hostDeviceId &&
+      body && typeof body.touchToken === 'string' && /^[a-f0-9]{64}$/.test(body.touchToken) &&
+      session.tokenHash === hash(body.touchToken) && typeof body.challenge === 'string' &&
+      /^[a-f0-9]{24}$/.test(body.challenge) && (!session.challenge || session.challenge === body.challenge) &&
+      session.status !== 'consumed') role = 'reader';
+  if (!role) return fail(404, 'SESSION_NOT_FOUND', '无权取消此商家会话');
+  if (session.status === 'consumed') return { status: 409, body: {
+    error: 'SESSION_ALREADY_CONSUMED', message: '凭证已兑换，不能撤销已提交结果', ...snapshot(data, session, role, options)
+  } };
+  const current = snapshot(data, session, role, options);
+  if (current.session.status !== 'waiting') return { status: 200, body: current };
+  session.status = 'cancelled';
+  session.cancelledAt = new Date().toISOString();
+  options.persist(data);
+  return { status: 200, body: snapshot(data, session, role, options) };
+}
+
+module.exports = { LEVEL, listTerminals, issue, observe, claim, hasEvidence, registry, status, cancel };

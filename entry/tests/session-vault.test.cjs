@@ -77,3 +77,44 @@ test('storage failure is surfaced and does not poison subsequent checkpoint writ
   await runtime.vault.saveNfc(checkpoint());
   assert.equal((await runtime.vault.loadNfc('alice', 'https://backend.example')).sessionId, 'session-one');
 });
+
+function merchantCheckpoint(id = 'merchant-one') {
+  return { ...checkpoint(id), stage: 'cancel', touchToken: 'a'.repeat(64), challenge: 'b'.repeat(24) };
+}
+
+test('merchant cancellation survives restart/expiry independently of personal journal', async () => {
+  const first = createRuntime();
+  await first.vault.saveNfc(checkpoint());
+  await first.vault.saveMerchant(merchantCheckpoint());
+  const restarted = createRuntime(first.storage);
+  assert.equal((await restarted.vault.loadMerchant('alice', 'https://backend.example')).stage, 'cancel');
+  assert.equal((await restarted.vault.loadNfc('alice', 'https://backend.example')).sessionId, 'session-one');
+  assert.equal(await restarted.vault.loadMerchant('bob', 'https://backend.example'), null);
+  assert.equal(await restarted.vault.loadMerchant('alice', 'https://other.example'), null);
+});
+
+test('merchant writes serialize and stale or cross-account cleanup cannot remove new checkpoint', async () => {
+  const r = createRuntime();
+  await Promise.all([r.vault.saveMerchant(merchantCheckpoint('old')), r.vault.saveMerchant(merchantCheckpoint('new')),
+    r.vault.clearMerchant('old', 'alice', 'https://backend.example')]);
+  await r.vault.clearMerchant('new', 'bob', 'https://backend.example');
+  await r.vault.clearMerchant('new', 'alice', 'https://other.example');
+  assert.equal((await r.vault.loadMerchant('alice', 'https://backend.example')).sessionId, 'new');
+  await r.vault.clearMerchant('new', 'alice', 'https://backend.example');
+  assert.equal(await r.vault.loadMerchant('alice', 'https://backend.example'), null);
+});
+
+test('failed merchant checkpoint write is observable and later retry succeeds', async () => {
+  const r = createRuntime(); r.failWrites(true);
+  await assert.rejects(r.vault.saveMerchant(merchantCheckpoint()));
+  r.failWrites(false); await r.vault.saveMerchant(merchantCheckpoint());
+  assert.equal((await r.vault.loadMerchant('alice', 'https://backend.example')).stage, 'cancel');
+});
+
+test('malformed merchant checkpoint cannot silently resume', async () => {
+  const r = createRuntime();
+  for (const change of [{ stage: 'unexpected' }, { touchToken: '' }, { challenge: 'wrong' }, { sessionId: 12 }]) {
+    await r.vault.saveMerchant({ ...merchantCheckpoint(), ...change });
+    await assert.rejects(r.vault.loadMerchant('alice', 'https://backend.example'));
+  }
+});

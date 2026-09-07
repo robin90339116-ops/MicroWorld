@@ -110,3 +110,75 @@ test('malformed request bodies return validation errors without mutations', () =
   }
   assert.equal(f.writes(), 1);
 });
+
+test('status is participant/device scoped; only reader receives reward snapshot', () => {
+  const f = fixture();
+  assert.equal(terminal.status(f.data, f.buyer, 'phone', f.proof.sessionId, f.options).status, 404);
+  assert.equal(terminal.status(f.data, f.host, 'wrong', f.proof.sessionId, f.options).status, 404);
+  f.observe();
+  const result = terminal.claim(f.data, f.buyer, f.proof, f.options);
+  merchant.merchantCheckin(f.data, f.buyer, result.tap.id, f.options);
+  merchant.merchantPlaceReview(f.data, f.buyer, result.tap.id, { stars: 5, comment: 'private review' }, f.options);
+  const before = structuredClone(f.data);
+  const host = terminal.status(f.data, f.host, 'terminal', f.proof.sessionId, f.options).body.session;
+  const reader = terminal.status(f.data, f.buyer, 'phone', f.proof.sessionId, f.options).body.session;
+  assert.equal(host.status, 'consumed'); assert.equal(host.reviewed, true);
+  assert.equal(host.reward, null); assert.equal(reader.reward.points.awarded, 5);
+  for (const field of ['touchToken', 'tokenHash', 'challenge', 'readerUserId', 'readerDeviceId', 'comment']) assert.equal(host[field], undefined);
+  assert.equal(terminal.status(f.data, { id: 'third' }, 'phone', f.proof.sessionId, f.options).status, 404);
+  assert.deepEqual(f.data, before);
+});
+
+test('host cancellation is idempotent and prevents observe/claim without awarding', () => {
+  const f = fixture();
+  assert.equal(terminal.cancel(f.data, f.host, 'terminal', f.proof.sessionId, {}, f.options).body.session.status, 'cancelled');
+  const writes = f.writes();
+  assert.equal(terminal.cancel(f.data, f.host, 'terminal', f.proof.sessionId, {}, f.options).body.session.status, 'cancelled');
+  assert.equal(f.writes(), writes);
+  assert.equal(f.observe().status, 409);
+  assert.equal(terminal.claim(f.data, f.buyer, f.proof, f.options).status, 409);
+  assert.equal(f.data.merchantTaps.length, 0);
+});
+
+test('unbound reader cancellation needs matching token and challenge, not a session ID alone', () => {
+  const f = fixture(); f.observe();
+  assert.equal(terminal.cancel(f.data, f.buyer, 'phone', f.proof.sessionId, {}, f.options).status, 404);
+  assert.equal(terminal.cancel(f.data, f.buyer, 'phone', f.proof.sessionId, { ...f.proof, challenge: '0'.repeat(24) }, f.options).status, 404);
+  const result = terminal.cancel(f.data, f.buyer, 'phone', f.proof.sessionId, f.proof, f.options);
+  assert.equal(result.status, 200); assert.equal(result.body.session.status, 'cancelled');
+  assert.equal(terminal.claim(f.data, f.buyer, f.proof, f.options).status, 409);
+});
+
+test('claim winning a cancel race retains original evidence and reports conflict to both parties', () => {
+  const f = fixture(); f.observe();
+  const claimed = terminal.claim(f.data, f.buyer, f.proof, f.options);
+  const before = structuredClone(f.data);
+  for (const [account, deviceId] of [[f.host, 'terminal'], [f.buyer, 'phone']]) {
+    const result = terminal.cancel(f.data, account, deviceId, f.proof.sessionId, f.proof, f.options);
+    assert.equal(result.status, 409); assert.equal(result.body.session.tapId, claimed.tap.id);
+    assert.equal(result.body.session.status, 'consumed');
+  }
+  assert.deepEqual(f.data, before);
+});
+
+test('restart and expired local deadline do not hide consumed results; revoked registration remains visible', () => {
+  const f = fixture(); f.observe(); terminal.claim(f.data, f.buyer, f.proof, f.options);
+  const restored = structuredClone(f.data);
+  restored.merchantTerminalSessions[0].expiresAt = '2000-01-01T00:00:00Z';
+  f.options.registry[0].active = false;
+  const result = terminal.status(restored, f.buyer, 'phone', f.proof.sessionId, f.options);
+  assert.equal(result.body.session.status, 'consumed'); assert.equal(result.body.session.registrationActive, false);
+  assert.equal(restored.merchantTaps.length, 1);
+});
+
+test('cancel of expired, superseded or revoked waiting session reports actual closed state', () => {
+  for (const state of ['expired', 'superseded', 'revoked']) {
+    const f = fixture();
+    if (state === 'expired') f.data.merchantTerminalSessions[0].expiresAt = '2000-01-01T00:00:00Z';
+    if (state === 'superseded') f.data.merchantTerminalSessions[0].status = state;
+    if (state === 'revoked') f.options.registry[0].active = false;
+    const before = structuredClone(f.data);
+    assert.equal(terminal.cancel(f.data, f.host, 'terminal', f.proof.sessionId, {}, f.options).body.session.status, state);
+    assert.deepEqual(f.data, before);
+  }
+});

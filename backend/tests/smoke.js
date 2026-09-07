@@ -714,6 +714,14 @@ async function main() {
     })));
     assert(reviewRetries.every(result => result.response.status === 200 && result.body.review.id === merchantPlaceReview.body.review.id), 'concurrent retries must reuse the original review');
     assert(reviewRetries.every(result => JSON.stringify(result.body.reward) === JSON.stringify(merchantPlaceReview.body.reward)), 'retry must return original reward snapshot');
+    const merchantProgress = await request(`/api/merchant/terminals/sessions/${proof.sessionId}`, { headers: authHeaders(reader.body.token) });
+    const buyerProgress = await request(`/api/merchant/terminals/sessions/${proof.sessionId}`, { headers: authHeaders(token) });
+    assert(merchantProgress.response.ok && merchantProgress.body.session.reviewed === true && merchantProgress.body.session.reward === null, 'merchant progress must omit consumer reward details');
+    assert(buyerProgress.response.ok && buyerProgress.body.session.reward.medal.tokenId === merchantPlaceReview.body.reward.medal.tokenId, 'buyer recovery must return original reward');
+    const consumedCancel = await request(`/api/merchant/terminals/sessions/${proof.sessionId}/cancel`, {
+      method: 'POST', headers: authHeaders(token), body: JSON.stringify(proof)
+    });
+    assert(consumedCancel.response.status === 409 && consumedCancel.body.session.status === 'consumed', 'cancel cannot undo a consumed result');
 
     const duplicatePlaceReview = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/place-reviews`, {
       method: 'POST',
@@ -748,6 +756,17 @@ async function main() {
     assert(merchantTapList.response.ok, 'merchant tap list failed');
     assert(merchantTapList.body.contract === 'SmallWorld Merchant Tap v1', 'merchant tap list contract marker missing');
     assert(merchantTapList.body.taps.some(tap => tap.id === tapId && tap.orderCount === 0 && tap.itemReviewCount === 0 && tap.placeReviewCount === 1), 'failed payment must leave no order or item review');
+
+    const cancelProof = await merchantProof();
+    const cancelPath = `/api/merchant/terminals/sessions/${cancelProof.sessionId}/cancel`;
+    const cancelRetries = await Promise.all(Array.from({ length: 4 }, () => request(cancelPath, {
+      method: 'POST', headers: authHeaders(token), body: JSON.stringify(cancelProof)
+    })));
+    assert(cancelRetries.every(result => result.response.ok && result.body.session.status === 'cancelled'), 'reader cancellation must be idempotent before binding');
+    const cancelledClaim = await request('/api/merchant/taps', { method: 'POST', headers: authHeaders(token), body: JSON.stringify(cancelProof) });
+    assert(cancelledClaim.response.status === 409, 'cancelled session must never create a tap');
+    const unauthenticatedStatus = await request(`/api/merchant/terminals/sessions/${cancelProof.sessionId}`);
+    assert(unauthenticatedStatus.response.status === 401, 'status requires authentication');
 
     const aiRoute = await request('/api/explore/ai-route', { method: 'POST', body: JSON.stringify({}) });
     assert(aiRoute.response.status === 501, 'deferred AI route should return 501');

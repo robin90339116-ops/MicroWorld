@@ -24,6 +24,7 @@ export interface SavedNfcSession {
 // Tokens stay in the OS asset store, never in Preferences, logs or backups.
 export default class SessionVault {
   private static nfcWrites: Promise<void> = Promise.resolve();
+  private static merchantWrites: Promise<void> = Promise.resolve();
   private static async read(alias: string): Promise<string> {
     const query: asset.AssetMap = new Map();
     query.set(asset.Tag.ALIAS, new util.TextEncoder().encodeInto(alias));
@@ -103,6 +104,42 @@ export default class SessionVault {
       await asset.remove(query);
     });
     SessionVault.nfcWrites = clear.catch(() => {});
+    return clear;
+  }
+
+  static async loadMerchant(ownerUserId: string, baseUrl: string): Promise<SavedNfcSession | null> {
+    await SessionVault.merchantWrites;
+    const raw = await SessionVault.read('microworld.merchant.v1');
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as SavedNfcSession;
+    if (saved.ownerUserId !== ownerUserId || saved.baseUrl !== baseUrl) return null;
+    if (typeof saved.sessionId !== 'string' || !saved.sessionId || (saved.role !== 'host' && saved.role !== 'reader') ||
+      ['waiting', 'read', 'observed', 'confirm', 'cancel'].indexOf(saved.stage) < 0 ||
+      typeof saved.touchToken !== 'string' || !/^[a-f0-9]{64}$/.test(saved.touchToken) ||
+      typeof saved.challenge !== 'string' || (saved.challenge !== '' && !/^[a-f0-9]{24}$/.test(saved.challenge)) ||
+      typeof saved.hostUserId !== 'string' || typeof saved.placeId !== 'string' ||
+      !Number.isFinite(Date.parse(saved.expiresAt))) throw new Error('商家恢复记录损坏');
+    return saved;
+  }
+
+  static saveMerchant(saved: SavedNfcSession): Promise<void> {
+    const value = JSON.stringify(saved);
+    const write = SessionVault.merchantWrites.then(() => SessionVault.write('microworld.merchant.v1', value));
+    SessionVault.merchantWrites = write.catch(() => {});
+    return write;
+  }
+
+  static clearMerchant(sessionId: string, ownerUserId: string, baseUrl: string): Promise<void> {
+    const clear = SessionVault.merchantWrites.then(async () => {
+      const raw = await SessionVault.read('microworld.merchant.v1');
+      if (!raw) return;
+      const saved = JSON.parse(raw) as SavedNfcSession;
+      if (saved.sessionId !== sessionId || saved.ownerUserId !== ownerUserId || saved.baseUrl !== baseUrl) return;
+      const query: asset.AssetMap = new Map();
+      query.set(asset.Tag.ALIAS, new util.TextEncoder().encodeInto('microworld.merchant.v1'));
+      await asset.remove(query);
+    });
+    SessionVault.merchantWrites = clear.catch(() => {});
     return clear;
   }
 
