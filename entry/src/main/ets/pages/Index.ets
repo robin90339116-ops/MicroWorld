@@ -422,7 +422,7 @@ struct Index {
   @State nfcKind: string = 'personal';
   @State merchantName: string = 'Market Lane Coffee';
   @State merchantTapId: string = '';
-  @State merchantStatus: string = '把手机碰一下商家设备的 NFC，或扫描店内二维码';
+  @State merchantStatus: string = '商家流程暂为演示，未接入真实商家认证与 NFC 门贴验证';
   @State merchantCheckedIn: boolean = false;
   @State merchantPaid: boolean = false;
   @State merchantStars: number = 5;
@@ -1740,7 +1740,7 @@ struct Index {
       this.merchantPaid = false;
       this.merchantTags = [];
       this.merchantStars = 5;
-      this.merchantStatus = '已碰到门贴 · GPS 匹配 ✓ · 到店确认';
+      this.merchantStatus = '商家流程演示：未核验商家身份、NFC 或 GPS，不代表真实到场';
       this.go('merchantAction');
     } catch (error) {
       this.merchantStatus = '商家碰一碰失败：' + String(error);
@@ -1754,7 +1754,7 @@ struct Index {
     try {
       await this.apiPost('/api/merchant/taps/' + this.merchantTapId + '/checkin', {} as Record<string, Object>);
       this.merchantCheckedIn = true;
-      this.merchantStatus = '到店打卡成功 · 城市足迹 +1';
+      this.merchantStatus = '演示打卡已记录，尚未核验真实到场';
     } catch (error) {
       this.merchantStatus = '打卡失败：' + String(error);
     }
@@ -1783,10 +1783,12 @@ struct Index {
       const reward = this.mapValue(response['reward']);
       const medal = this.mapValue(reward['medal']);
       const points = this.mapValue(reward['points']);
-      this.merchantRewardBadge = this.textValue(medal['name'], '商家纪念徽章') + ' · 稀有度 ' +
-        this.textValue(medal['rarity'], 'R') + ' · ' + this.textValue(medal['tokenId']);
-      this.merchantRewardPoints = '+' + this.numberText(points['awarded'], '5') + ' · 现在 ' + this.numberText(points['total'], '0');
-      this.merchantRewardText = '感谢你的真实到店评价，地点可信度已更新。';
+      this.merchantRewardBadge = this.textValue(medal['tokenId']).length > 0 ?
+        this.textValue(medal['name']) + ' · 未上链凭证 · ' + this.textValue(medal['tokenId']) : '本次未发放新徽章';
+      this.merchantRewardPoints = '+' + this.numberText(points['awarded'], '0') + ' · 当次结算余额 ' + this.numberText(points['total'], '0');
+      this.merchantRewardText = this.textValue(reward['reason']) === 'DAILY_PLACE_LIMIT' ?
+        '评价已保存；同一账号在同一地点每日（UTC）仅奖励一次。本流程仍为演示。' :
+        this.textValue(response['message'], '评价已保存；暂无可恢复的奖励快照，不会补发重复奖励。');
       this.merchantTags = [];
       this.go('merchantReward');
     } catch (error) {
@@ -4000,7 +4002,7 @@ struct Index {
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%');
-                Text('● 已认证商家')
+                Text('演示商家 · 未认证')
                   .fontSize(12)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(C_DEEP)
@@ -4024,7 +4026,7 @@ struct Index {
           .borderRadius(16)
           .margin({ top: 18 });
 
-          Button('碰门贴 · 开始')
+          Button('体验商家流程（演示）')
             .width('100%')
             .height(54)
             .fontSize(16)
@@ -4326,7 +4328,7 @@ struct Index {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%');
-            Text('GPS 匹配 ✓ · 到店确认')
+            Text('流程演示 · 未核验真实到场')
               .fontSize(12)
               .fontColor(C_DEEP)
               .margin({ top: 4 });
@@ -4349,7 +4351,7 @@ struct Index {
           .width('100%')
           .margin({ top: 20, bottom: 10 });
         Row() {
-          this.MerchantActionCard('到店打卡', '城市足迹 +1', this.merchantCheckedIn, false, () => { this.doMerchantCheckin(); });
+          this.MerchantActionCard('演示打卡', '不代表真实到场', this.merchantCheckedIn, false, () => { this.doMerchantCheckin(); });
           this.MerchantActionCard('支付未开通', '点击查看说明 · 不会扣款', false, true, () => { this.doMerchantPay(); });
         }
         .width('100%');
@@ -4585,7 +4587,7 @@ struct Index {
             .lineHeight(22)
             .textAlign(TextAlign.Center)
             .margin({ top: 10 });
-          Text('商家纪念徽章 · 稀有度 R')
+          Text('演示奖励 · 非已上链 NFT')
             .fontSize(12)
             .fontColor(C_MUTED)
             .margin({ top: 6 });

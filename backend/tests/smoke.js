@@ -636,8 +636,8 @@ async function main() {
       headers: authHeaders(token),
       body: JSON.stringify({
         placeId: 'coffee',
-        deviceId: 'same-device',
-        merchantDeviceId: 'same-device'
+        deviceId: 'forged-device',
+        merchantDeviceId: 'smoke-device'
       })
     });
     assert(merchantConflict.response.status === 409, 'merchant tap should reject same consumer and merchant device');
@@ -685,6 +685,13 @@ async function main() {
     assert(merchantPlaceReview.body.reward && merchantPlaceReview.body.reward.medal && merchantPlaceReview.body.reward.medal.tokenId, 'merchant place review should grant a commemorative medal');
     assert(merchantPlaceReview.body.reward.medal.chainStatus, 'merchant medal should carry a chain status');
     assert(merchantPlaceReview.body.reward.points && merchantPlaceReview.body.reward.points.awarded === 5, 'merchant place review should award points');
+
+    const reviewRetries = await Promise.all(Array.from({ length: 6 }, () => request(`/api/merchant/taps/${encodeURIComponent(tapId)}/place-reviews`, {
+      method: 'POST', headers: authHeaders(token),
+      body: JSON.stringify({ stars: 5, tags: ['咖啡赞', '环境好', '适合独处'], comment: 'smoke 到店评价' })
+    })));
+    assert(reviewRetries.every(result => result.response.status === 200 && result.body.review.id === merchantPlaceReview.body.review.id), 'concurrent retries must reuse the original review');
+    assert(reviewRetries.every(result => JSON.stringify(result.body.reward) === JSON.stringify(merchantPlaceReview.body.reward)), 'retry must return original reward snapshot');
 
     const duplicatePlaceReview = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/place-reviews`, {
       method: 'POST',

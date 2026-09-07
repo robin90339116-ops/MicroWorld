@@ -13,16 +13,34 @@ function arrayOf(data, key) {
 }
 
 function hasCheckin(tap) {
-  return Boolean(tap.checkinAt) || ['checked-in', 'paid', 'reviewed', 'rewarded'].includes(tap.status);
+  return typeof tap.checkinAt === 'string' && Number.isFinite(Date.parse(tap.checkinAt));
+}
+
+function normalizeReview(body) {
+  if (!body || !Number.isInteger(body.stars) || body.stars < 1 || body.stars > 5) return null;
+  const tags = body.tags === undefined ? [] : body.tags;
+  const comment = body.comment === undefined ? '' : body.comment;
+  if (!Array.isArray(tags) || tags.length > 8 ||
+      tags.some(tag => typeof tag !== 'string' || !tag.trim() || tag.trim().length > 24) ||
+      typeof comment !== 'string' || comment.length > 240) return null;
+  return { stars: body.stars, tags: [...new Set(tags.map(tag => tag.trim()))].sort(), comment: comment.trim() };
 }
 
 // 完成到店评价后发放「商家纪念徽章」(数字藏品)+ 积分,对应设计的「商家碰一碰结果页」。
 function awardMerchantReward(data, account, tap, place, options) {
+  const today = new Date().toISOString().slice(0, 10);
+  const alreadyAwarded = arrayOf(data, 'merchantMedals').some(item =>
+    item.userId === account.id && item.placeId === tap.placeId &&
+    typeof item.earnedAt === 'string' && item.earnedAt.slice(0, 10) === today);
+  if (alreadyAwarded) {
+    return { medal: null, points: { awarded: 0, total: Number(data.userPoints?.[account.id] || 0) }, reason: 'DAILY_PLACE_LIMIT' };
+  }
   const placeLabel = place ? (place.shortName || place.name) : '商家';
   const serial = arrayOf(data, 'merchantMedals').filter(item => item.placeId === tap.placeId).length + 7;
-  const tokenId = `SW-MERCHANT-${String(tap.placeId).toUpperCase()}-${String(serial).padStart(3, '0')}`;
+  const medalId = options.createId('merchant_medal');
+  const tokenId = `SW-MERCHANT-${medalId}`;
   const medal = {
-    id: options.createId('merchant_medal'),
+    id: medalId,
     userId: account.id,
     placeId: tap.placeId,
     tapId: tap.id,
@@ -65,7 +83,12 @@ function merchantGuardrails() {
     doesNotCreateSocialRelationship: true,
     itemReviewScope: 'consumed-item',
     paymentAvailable: false,
-    itemReviewAvailable: false
+    itemReviewAvailable: false,
+    merchantIdentityVerified: false,
+    hardwareAttested: false,
+    gpsVerified: false,
+    verificationLevel: 'demo-unverified',
+    productionReady: false
   };
 }
 
@@ -76,6 +99,11 @@ function publicMerchantTap(data, tap, options = {}) {
   const placeReviews = arrayOf(data, 'merchantPlaceReviews').filter(review => review.tapId === tap.id);
   return {
     ...tap,
+    // Legacy demo records may contain hardwareVerified=true. Never present it
+    // as an attestation: this module has not yet integrated a trusted terminal.
+    hardwareVerified: false,
+    gpsVerified: false,
+    verificationLevel: 'demo-unverified',
     place: place ? {
       id: place.id,
       name: place.name,
@@ -129,8 +157,10 @@ function createMerchantTap(data, account, body, options) {
     merchantDeviceId,
     merchantId: String(body.merchantId || place.id).slice(0, 80),
     transport: String(body.transport || 'merchant_nfc'),
-    hardwareVerified: body.hardwareVerified !== false,
-    status: 'verified',
+    hardwareVerified: false,
+    gpsVerified: false,
+    verificationLevel: 'demo-unverified',
+    status: 'demo-created',
     createdAt: new Date().toISOString()
   };
 
@@ -141,7 +171,7 @@ function createMerchantTap(data, account, body, options) {
     status: 201,
     body: {
       contract: MERCHANT_TAP_CONTRACT,
-      message: '已完成商家 NFC 碰一碰',
+      message: '已创建商家流程演示记录，尚未验证商家身份、NFC 或 GPS',
       tap: publicMerchantTap(data, tap, options),
       place: options.enrichPlace(data, place),
       guardrails: merchantGuardrails()
@@ -159,15 +189,17 @@ function merchantCheckin(data, account, tapId, options) {
     return { status: 404, body: { error: 'TAP_NOT_FOUND', message: '商家碰一碰记录不存在' } };
   }
 
-  tap.checkinAt = new Date().toISOString();
-  tap.status = 'checked-in';
-  options.persist(data);
+  if (!hasCheckin(tap)) {
+    tap.checkinAt = new Date().toISOString();
+    tap.status = 'checked-in';
+    options.persist(data);
+  }
 
   return {
     status: 200,
     body: {
       contract: MERCHANT_TAP_CONTRACT,
-      message: '到店打卡成功',
+      message: '演示打卡已记录，不代表已核验真实到场',
       tap: publicMerchantTap(data, tap, options),
       guardrails: merchantGuardrails()
     }
@@ -221,26 +253,40 @@ function merchantPlaceReview(data, account, tapId, body, options) {
   if (!hasCheckin(tap)) {
     return { status: 403, body: { error: 'CHECKIN_REQUIRED', message: '到店打卡后才可评价地点，更可信' } };
   }
+  const input = normalizeReview(body);
+  if (!input) {
+    return { status: 400, body: { error: 'INVALID_REVIEW', message: '评分须为 1–5 的整数，标签最多 8 个且每个 1–24 字，评价最多 240 字' } };
+  }
   const existing = arrayOf(data, 'merchantPlaceReviews').find(item => item.tapId === tapId);
   if (existing) {
+    const previous = normalizeReview(existing);
+    if (existing.userId === account.id && previous && JSON.stringify(previous) === JSON.stringify(input)) {
+      return { status: 200, body: {
+        contract: MERCHANT_TAP_CONTRACT,
+        message: '评价已提交，返回原结果，不重复发放奖励',
+        review: existing,
+        reward: existing.reward || null,
+        tap: publicMerchantTap(data, tap, options),
+        guardrails: merchantGuardrails()
+      } };
+    }
     return { status: 409, body: { error: 'ALREADY_REVIEWED', message: '本次商家碰一碰已评价过该地点' } };
   }
 
-  const stars = Math.max(1, Math.min(5, Number(body.stars || 5)));
   const place = typeof options.pickPlace === 'function' ? options.pickPlace(data, tap.placeId) : null;
   const review = {
     id: options.createId('merchant_place_review'),
     tapId,
     placeId: tap.placeId,
     userId: account.id,
-    stars,
-    tags: Array.isArray(body.tags) ? body.tags.map(tag => String(tag).slice(0, 24)).slice(0, 8) : [],
-    comment: String(body.comment || '').slice(0, 240),
+    ...input,
     createdAt: new Date().toISOString()
   };
   arrayOf(data, 'merchantPlaceReviews').push(review);
 
   const reward = awardMerchantReward(data, account, tap, place, options);
+  review.reward = reward;
+  tap.reward = reward;
   tap.status = 'rewarded';
   tap.placeReviewId = review.id;
   options.persist(data);
@@ -249,7 +295,7 @@ function merchantPlaceReview(data, account, tapId, body, options) {
     status: 201,
     body: {
       contract: MERCHANT_TAP_CONTRACT,
-      message: '感谢你的真实到店评价，地点可信度已更新',
+      message: '演示评价已保存；未核验真实到场，徽章不是已上链 NFT',
       review,
       reward,
       tap: publicMerchantTap(data, tap, options),
