@@ -1833,6 +1833,10 @@ const server = http.createServer(async (req, res) => {
 
     send(res, 404, { error: 'NOT_FOUND' });
   } catch (error) {
+    if (String(error.code || '').startsWith('STORAGE_')) {
+      send(res, 503, { error: error.code, message: error.message });
+      return;
+    }
     send(res, 500, { error: 'SERVER_ERROR', message: error.message });
   }
 });

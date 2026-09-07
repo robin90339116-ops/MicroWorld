@@ -3,7 +3,8 @@
 // 可插拔状态持久层。
 //
 // - file 驱动(默认):把整份应用状态写入单个 JSON 文件,保持同步读写,
-//   适合本地开发、单机部署,或云上挂载持久卷(EVS/SFS)。
+//   使用同目录临时文件、fsync 和原子替换；异常文件保留并拒绝服务。
+//   仅适合单进程使用，不是数据库事务或多实例一致性方案。
 // - postgres 驱动:面向华为云 GaussDB(openGauss)/ RDS for PostgreSQL,
 //   以「单行 JSONB 文档 + 内存缓存」的方式落库,对上层仍暴露同步的
 //   readRaw()/writeRaw(),因此 server.js 里的 readData()/writeData()
@@ -12,55 +13,10 @@
 // 只有设置了 SMALLWORLD_DATABASE_URL 时才会加载 postgres 驱动与 `pg` 依赖;
 // 未设置时整条数据库代码路径都不会被触及,file 模式保持零第三方依赖。
 
-const fs = require('fs');
+const { createFileStore } = require('./file-store');
 
 function cloneSeed(seed) {
   return JSON.parse(JSON.stringify(seed));
-}
-
-// ---------------------------------------------------------------------------
-// JSON 文件驱动
-// ---------------------------------------------------------------------------
-function createFileStore({ dataFile, seed }) {
-  function ensure() {
-    if (!fs.existsSync(dataFile)) {
-      fs.writeFileSync(dataFile, JSON.stringify(seed, null, 2));
-      return;
-    }
-    // 文件存在但为空 / 只有空白(云上挂载的空卷、写入被中断等)时回填种子数据,
-    // 避免后续 JSON.parse('') 抛错导致每个请求 500。
-    try {
-      if (fs.readFileSync(dataFile, 'utf8').trim().length === 0) {
-        fs.writeFileSync(dataFile, JSON.stringify(seed, null, 2));
-      }
-    } catch (error) {
-      fs.writeFileSync(dataFile, JSON.stringify(seed, null, 2));
-    }
-  }
-
-  return {
-    kind: 'json-file',
-    async init() {
-      ensure();
-    },
-    readRaw() {
-      ensure();
-      try {
-        return JSON.parse(fs.readFileSync(dataFile, 'utf8'));
-      } catch (error) {
-        // 损坏的非法 JSON:回退到种子数据并重写,保证服务可用而不是持续 500。
-        console.error(`[MicroWorld] 数据文件不可读,已用种子数据重建: ${error.message}`);
-        const rebuilt = cloneSeed(seed);
-        fs.writeFileSync(dataFile, JSON.stringify(rebuilt, null, 2));
-        return rebuilt;
-      }
-    },
-    writeRaw(data) {
-      fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
-    },
-    async flush() {},
-    async close() {}
-  };
 }
 
 // ---------------------------------------------------------------------------
