@@ -8,8 +8,22 @@ export interface SavedSession {
   baseUrl: string;
 }
 
+export interface SavedNfcSession {
+  ownerUserId: string;
+  baseUrl: string;
+  sessionId: string;
+  role: string;
+  stage: string;
+  placeId: string;
+  expiresAt: string;
+  touchToken: string;
+  challenge: string;
+  hostUserId: string;
+}
+
 // Tokens stay in the OS asset store, never in Preferences, logs or backups.
 export default class SessionVault {
+  private static nfcWrites: Promise<void> = Promise.resolve();
   private static async read(alias: string): Promise<string> {
     const query: asset.AssetMap = new Map();
     query.set(asset.Tag.ALIAS, new util.TextEncoder().encodeInto(alias));
@@ -56,6 +70,40 @@ export default class SessionVault {
 
   static async save(session: SavedSession): Promise<void> {
     await SessionVault.write('microworld.session.v1', JSON.stringify(session));
+  }
+
+  static async loadNfc(ownerUserId: string, baseUrl: string): Promise<SavedNfcSession | null> {
+    await SessionVault.nfcWrites;
+    const raw = await SessionVault.read('microworld.nfc.v1');
+    if (raw.length === 0) return null;
+    const saved = JSON.parse(raw) as SavedNfcSession;
+    if (saved.ownerUserId !== ownerUserId || saved.baseUrl !== baseUrl) return null;
+    if (typeof saved.sessionId !== 'string' || saved.sessionId.length === 0 ||
+      (saved.role !== 'host' && saved.role !== 'reader') || typeof saved.challenge !== 'string' ||
+      typeof saved.touchToken !== 'string' || !Number.isFinite(Date.parse(saved.expiresAt))) {
+      throw new Error('本地碰一碰记录损坏，不能自动恢复');
+    }
+    // Even after expiry, query the server: it may already have committed a result.
+    return saved;
+  }
+
+  static saveNfc(saved: SavedNfcSession): Promise<void> {
+    const value = JSON.stringify(saved);
+    const write = SessionVault.nfcWrites.then(() => SessionVault.write('microworld.nfc.v1', value));
+    SessionVault.nfcWrites = write.catch(() => {});
+    return write;
+  }
+
+  static clearNfc(sessionId: string): Promise<void> {
+    const clear = SessionVault.nfcWrites.then(async () => {
+      const raw = await SessionVault.read('microworld.nfc.v1');
+      if (raw.length === 0 || (JSON.parse(raw) as SavedNfcSession).sessionId !== sessionId) return;
+      const query: asset.AssetMap = new Map();
+      query.set(asset.Tag.ALIAS, new util.TextEncoder().encodeInto('microworld.nfc.v1'));
+      await asset.remove(query);
+    });
+    SessionVault.nfcWrites = clear.catch(() => {});
+    return clear;
   }
 
   static async clear(): Promise<void> {

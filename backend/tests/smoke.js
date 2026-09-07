@@ -527,7 +527,7 @@ async function main() {
     });
     assert(sameDeviceNfc.response.status === 409, 'nfc should reject same user or same device touch');
 
-    const confirmNfc = await request('/api/nfc/sessions/confirm', {
+    const preparedNfc = await request('/api/nfc/sessions/confirm', {
       method: 'POST',
       headers: authHeaders(reader.body.token),
       body: JSON.stringify({
@@ -538,6 +538,12 @@ async function main() {
         challenge: 'abcdef1234567890',
         gpsVerified: true
       })
+    });
+    assert(preparedNfc.response.status === 202, 'reader confirmation must wait for host');
+    assert(!preparedNfc.body.proofId && !preparedNfc.body.reward, 'one-sided confirmation must not award proof or points');
+    const confirmNfc = await request(`/api/nfc/sessions/${nfcSession.body.sessionId}/decision`, {
+      method: 'POST', headers: authHeaders(token),
+      body: JSON.stringify({ action: 'accept', challenge: 'abcdef1234567890' })
     });
     assert(confirmNfc.response.status === 201, `nfc confirm failed: ${JSON.stringify(confirmNfc.body)}`);
     assert(confirmNfc.body.contract === 'SmallWorld NFC Proof v1', 'nfc confirm contract marker missing');
@@ -557,6 +563,19 @@ async function main() {
     assert(nfcStatus.response.ok, 'nfc session status endpoint failed');
     assert(nfcStatus.body.contract === 'SmallWorld NFC Proof v1', 'nfc status contract marker missing');
     assert(nfcStatus.body.proofId === confirmNfc.body.proofId, 'nfc status proof mismatch');
+    const duplicateDecisions = await Promise.all([1, 2, 3].map(() => request(`/api/nfc/sessions/${nfcSession.body.sessionId}/decision`, {
+      method: 'POST', headers: authHeaders(token), body: JSON.stringify({ action: 'accept', challenge: 'abcdef1234567890' })
+    })));
+    assert(duplicateDecisions.every(result => result.response.ok && result.body.proofId === confirmNfc.body.proofId &&
+      result.body.reward.points.total === confirmNfc.body.reward.points.total), 'parallel retries must return the same proof and reward snapshot');
+    const readerStatus = await request(`/api/nfc/sessions/${nfcSession.body.sessionId}`, { headers: authHeaders(reader.body.token) });
+    assert(readerStatus.body.reward.points.awarded === 6 && readerStatus.body.chatId === confirmNfc.body.chatId, 'reader must receive reward and shared chat');
+    const directMessage = await request(`/api/chats/${confirmNfc.body.chatId}/messages`, {
+      method: 'POST', headers: authHeaders(token), body: JSON.stringify({ text: '双方确认后的第一条消息' })
+    });
+    assert(directMessage.response.status === 201, 'NFC must create a usable real conversation');
+    const peerMessages = await request(`/api/chats/${confirmNfc.body.chatId}/messages`, { headers: authHeaders(reader.body.token) });
+    assert(peerMessages.body.messages.some(item => item.text === '双方确认后的第一条消息' && !item.mine), 'peer must read real message with correct sender');
 
     const nfcProofs = await request('/api/nfc/proofs', {
       headers: authHeaders(token)
@@ -576,11 +595,7 @@ async function main() {
         repeatVisit: true
       })
     });
-    assert(review.response.status === 201, `nfc review failed: ${JSON.stringify(review.body)}`);
-    assert(review.body.contract === 'SmallWorld Review Rating v1', 'review rating contract marker missing');
-    assert(Number.isFinite(review.body.reviewWeight) && review.body.reviewWeight > 1, 'review weight missing');
-    assert(review.body.guardrails && review.body.guardrails.requiresNfcProof === true, 'review guardrails missing');
-    assert(review.body.place && review.body.place.verifiedReviews >= firstPlace.verifiedReviews, 'review did not return updated place');
+    assert(review.response.status === 403, 'client-reported NFC alone must not unlock hardware-verified place reviews');
 
     const duplicateReview = await request('/api/reviews/nfc', {
       method: 'POST',
@@ -593,7 +608,7 @@ async function main() {
         repeatVisit: true
       })
     });
-    assert(duplicateReview.response.status === 409, 'duplicate nfc review should be rejected');
+    assert(duplicateReview.response.status === 403, 'retries must not bypass the verified-proof requirement');
 
     const placeRating = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/rating`);
     assert(placeRating.response.ok, 'place rating endpoint failed');

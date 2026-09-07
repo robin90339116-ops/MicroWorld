@@ -4,12 +4,24 @@ import { NfcHostPayload, NfcPeerPayload } from '../utils/NfcPeerManager';
 import { MapComponent, mapCommon, map } from '@kit.MapKit';
 import { AsyncCallback, BusinessError } from '@kit.BasicServicesKit';
 import SessionVault from '../utils/SessionVault';
+import { SavedNfcSession } from '../utils/SessionVault';
 import util from '@ohos.util';
 
 interface ChatMessageItem {
   id: string;
   text: string;
   mine: boolean;
+}
+
+interface NfcDecisionBody { action: string; challenge: string; }
+interface NfcHistoryItem { id: string; title: string; detail: string; }
+
+class ApiResponseError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
 }
 
 interface MapPoint {
@@ -395,6 +407,17 @@ struct Index {
   @State nfcAffinityText: string = '';
   @State nfcPointsText: string = '';
   @State nfcBadgeText: string = '';
+  @State nfcSessionId: string = '';
+  @State nfcBusy: boolean = false;
+  @State nfcHistory: NfcHistoryItem[] = [];
+  @State nfcHistoryError: string = '';
+  private nfcHostChallenge: string = '';
+  private nfcTimer: number = -1;
+  private nfcPolling: boolean = false;
+  private nfcCompleted: boolean = false;
+  private nfcGeneration: number = 0;
+  private nfcHostPayload: NfcHostPayload | null = null;
+  @State nfcRestoring: boolean = false;
   private nfcPending: NfcPeerPayload | null = null;
   @State nfcKind: string = 'personal';
   @State merchantName: string = 'Market Lane Coffee';
@@ -476,6 +499,7 @@ struct Index {
   }
 
   private mainPage(next: string): void {
+    if (this.page === 'nfcTouch') this.stopNfc();
     this.stopChatPolling();
     this.activeTab = next;
     this.page = next;
@@ -602,7 +626,7 @@ struct Index {
           this.go('login');
           await SessionVault.clear();
         }
-        throw new Error(message);
+        throw new ApiResponseError(message, responseCode);
       }
       return parsed;
     } finally {
@@ -637,6 +661,8 @@ struct Index {
       this.loadPlaceRoomFeed();
     } else if (next === 'chatDetail') {
       this.loadChatMessages();
+    } else if (next === 'meNfc') {
+      this.loadNfcHistory();
     }
   }
 
@@ -662,6 +688,8 @@ struct Index {
     this.pendingMessageId = '';
     this.pendingMessageText = '';
     this.pendingMessageChat = '';
+    this.nfcHistory = [];
+    this.nfcHistoryError = '';
     this.loginPassword = '';
     this.registerConfirm = '';
     this.profileName = '未登录';
@@ -688,6 +716,7 @@ struct Index {
         this.profileName = this.textValue(user['displayName']);
         await this.loadBackendData();
         this.go(user['profileComplete'] === true ? 'explore' : 'identity');
+        await this.restoreNfcSession();
       } else {
         await this.connectBackend();
       }
@@ -1145,6 +1174,7 @@ struct Index {
       this.backendStatus = '登录成功，正在同步后端数据';
       await this.loadBackendData();
       this.go(this.mapValue(response['user'])['profileComplete'] === true ? 'explore' : 'identity');
+      await this.restoreNfcSession();
     } catch (error) {
       this.backendStatus = '登录失败：' + String(error);
     } finally {
@@ -1333,16 +1363,25 @@ struct Index {
 
   // ----- 碰一碰(华为官方 NFC:HCE + ISO-DEP)-----
   private async startNfcHost(): Promise<void> {
+    if (this.nfcBusy) return;
     if (this.authToken.length === 0) {
       this.nfcStatus = '登录后才能发起碰一碰';
       return;
     }
+    this.nfcBusy = true;
+    this.nfcCompleted = false;
+    this.nfcHostChallenge = '';
+    const generation = this.nfcGeneration;
     try {
       const body: NfcSessionBody = {
         placeId: this.currentPlace().id,
         hostDeviceId: this.nfcDeviceId
       };
       const response = await this.apiPost('/api/nfc/sessions', body);
+      if (generation !== this.nfcGeneration || this.page !== 'nfcTouch') {
+        this.cancelNfcSession(this.textValue(response['sessionId']));
+        return;
+      }
       const host = this.mapValue(response['host']);
       const payload: NfcHostPayload = {
         sessionId: this.textValue(response['sessionId']),
@@ -1352,33 +1391,51 @@ struct Index {
         expiresAt: this.textValue(response['expiresAt'])
       };
       this.nfcRole = 'host';
+      this.nfcSessionId = payload.sessionId;
+      this.nfcHostPayload = payload;
+      await this.saveNfcCheckpoint('host_wait');
+      if (generation !== this.nfcGeneration || this.page !== 'nfcTouch') return;
       this.nfcResult = '';
       this.nfcStep = 'wait';
-      this.nfcStatus = '让对方用手机来碰你 · 当前地点 ' + this.currentPlace().shortName + ' · GPS + QR 已验证 ✓';
-      this.nfcActive = this.nfcManager.startHost(payload, (message: string) => {
-        this.nfcStatus = message;
-      });
+      this.nfcStatus = '让对方用手机来碰你，读取后请双方确认；尚未认证 GPS 到场';
+      this.activateNfcHost(payload);
       if (!this.nfcActive) {
-        this.nfcRole = 'choose';
-        this.nfcStep = 'idle';
+        const failure = this.nfcStatus;
+        this.stopNfc();
+        this.nfcStatus = failure;
+      } else {
+        this.startNfcPolling();
       }
     } catch (error) {
       this.nfcStatus = '发起碰一碰失败：' + String(error);
       this.nfcRole = 'choose';
       this.nfcStep = 'idle';
+    } finally {
+      this.nfcBusy = false;
     }
   }
 
   private startNfcReader(): void {
+    if (this.authToken.length === 0) {
+      this.nfcStatus = '请先登录再读取';
+      return;
+    }
+    this.nfcCompleted = false;
     this.nfcRole = 'reader';
     this.nfcResult = '';
     this.nfcStep = 'wait';
     this.nfcStatus = '把两部手机背靠背靠近，对方也要打开碰一碰。等待碰触…';
     this.nfcActive = this.nfcManager.startReader(
       (payload: NfcPeerPayload) => {
+        this.nfcManager.stopReader();
+        this.nfcActive = false;
         this.nfcPending = payload;
+        this.nfcSessionId = payload.sessionId;
         this.nfcStep = 'sense';
         this.nfcStatus = '碰到了！确认是你们本人在一起吗？';
+        this.saveNfcCheckpoint('reader_sensed').catch(() => {
+          this.nfcStatus = '碰触信息尚未保存，确认前将再次尝试安全存储';
+        });
       },
       (message: string) => { this.nfcStatus = message; }
     );
@@ -1389,23 +1446,98 @@ struct Index {
   }
 
   private async confirmNfcTouch(): Promise<void> {
+    if (this.nfcBusy) return;
+    if (this.nfcRole === 'host') {
+      await this.acceptNfcHost();
+      return;
+    }
     const payload = this.nfcPending;
     if (this.authToken.length === 0 || payload === null) {
       this.nfcStatus = '登录后才能确认碰一碰';
       return;
     }
-    this.nfcStep = 'confirm';
-    this.nfcStatus = '你已确认 ✓，等待对方确认…';
+    this.nfcBusy = true;
+    this.nfcStatus = '正在提交确认…';
     try {
+      await this.saveNfcCheckpoint('reader_confirming');
       const body: NfcConfirmBody = {
         sessionId: payload.sessionId,
         touchToken: payload.touchToken,
         readerDeviceId: this.nfcDeviceId,
         transport: 'iso_dep_apdu',
         challenge: payload.challenge,
-        gpsVerified: true
+        gpsVerified: false
       };
       const response = await this.apiPost('/api/nfc/sessions/confirm', body);
+      await this.applyNfcStatus(response);
+      if (!this.nfcCompleted) this.startNfcPolling();
+    } catch (error) {
+      this.nfcStatus = '碰一碰确认失败，可重试：' + String(error);
+      this.nfcStep = 'sense';
+    } finally {
+      this.nfcBusy = false;
+    }
+  }
+
+  private startNfcPolling(): void {
+    if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
+    this.nfcTimer = setInterval(() => { this.pollNfcStatus(); }, 1500);
+  }
+
+  private async pollNfcStatus(): Promise<void> {
+    if (this.nfcPolling || this.nfcSessionId.length === 0 || this.page !== 'nfcTouch') return;
+    const sessionId = this.nfcSessionId;
+    this.nfcPolling = true;
+    try {
+      const response = await this.apiGet('/api/nfc/sessions/' + encodeURIComponent(sessionId));
+      if (sessionId === this.nfcSessionId) await this.applyNfcStatus(response);
+    } catch (error) {
+      if (sessionId === this.nfcSessionId) this.nfcStatus = '结果同步失败，正在重试：' + String(error);
+    } finally {
+      this.nfcPolling = false;
+    }
+  }
+
+  private async acceptNfcHost(): Promise<void> {
+    if (this.nfcHostChallenge.length === 0) {
+      this.nfcStatus = '未收到本机 NFC 交换记录，请重新碰触';
+      return;
+    }
+    this.nfcBusy = true;
+    try {
+      await this.saveNfcCheckpoint('host_deciding');
+      const body: NfcDecisionBody = { action: 'accept', challenge: this.nfcHostChallenge };
+      const response = await this.apiPost('/api/nfc/sessions/' + encodeURIComponent(this.nfcSessionId) + '/decision', body);
+      await this.applyNfcStatus(response);
+    } catch (error) {
+      this.nfcStatus = '确认失败，请重试：' + String(error);
+    } finally {
+      this.nfcBusy = false;
+    }
+  }
+
+  private async applyNfcStatus(response: Record<string, Object>): Promise<void> {
+    if (this.textValue(response['sessionId']) !== this.nfcSessionId || this.nfcCompleted) return;
+    const status = this.textValue(response['status']);
+    const peer = this.mapValue(response['peer']);
+    this.nfcSensedName = this.textValue(peer['name'], '现场用户');
+    if (status === 'awaiting_host') {
+      this.nfcStep = this.nfcRole === 'host' ? 'sense' : 'confirm';
+      this.nfcStatus = this.nfcRole === 'host' ? '对方已确认，请核对并确认本人' : '你已确认，等待对方确认';
+    } else if (['cancelled', 'expired', 'superseded'].indexOf(status) >= 0) {
+      if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
+      this.nfcTimer = -1;
+      this.nfcManager.stop();
+      this.nfcActive = false;
+      this.nfcStep = 'ended';
+      this.nfcStatus = status === 'cancelled' ? '碰一碰已取消，未建立连接或发放奖励' : '会话已过期或被替换，请重新发起';
+      await SessionVault.clearNfc(this.nfcSessionId).catch(() => {
+        this.backendStatus = '会话已结束，本机恢复记录清理失败；再次恢复会重新核对服务端';
+      });
+    } else if (status === 'confirmed') {
+      this.nfcCompleted = true;
+      if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
+      this.nfcTimer = -1;
       const reward = this.mapValue(response['reward']);
       const affinity = this.mapValue(reward['affinity']);
       const points = this.mapValue(reward['points']);
@@ -1417,17 +1549,59 @@ struct Index {
       this.nfcBadgeText = reward['badgeDropped'] === true
         ? (this.textValue(badge['name'], '3D 纪念徽章') + ' · 稀有度 ' + this.textValue(badge['rarity'], 'R') + ' · ' + this.textValue(badge['tokenId']))
         : '';
-      this.nfcManager.stopReader();
+      this.nfcManager.stop();
       this.nfcActive = false;
       this.nfcPending = null;
       this.nfcStep = alreadyFriends ? 'friend' : 'done';
+      this.nfcStatus = this.textValue(reward['rewardReason']) + '；当前徽章为数字凭证，未完成真实上链';
+      await SessionVault.clearNfc(this.nfcSessionId).catch(() => {
+        this.backendStatus = '碰面已完成，本机恢复记录清理失败；不会重复领奖';
+      });
+      await this.loadSocialData();
+      const peerId = this.textValue(peer['userId']);
+      const index = this.people.findIndex((person: ChatPerson) => person.id === peerId);
+      if (index >= 0) this.selectedPersonIndex = index;
+    }
+  }
+
+  private async cancelNfcSession(sessionId: string): Promise<void> {
+    try {
+      const body: NfcDecisionBody = { action: 'cancel', challenge: '' };
+      await this.apiPost('/api/nfc/sessions/' + encodeURIComponent(sessionId) + '/decision', body);
+      await SessionVault.clearNfc(sessionId);
     } catch (error) {
-      this.nfcStatus = '碰一碰校验失败：' + String(error);
-      this.nfcStep = 'sense';
+      this.backendStatus = '本机已停止碰触，服务端取消未确认；会话将在有效期后失效';
+    }
+  }
+
+  private async loadNfcHistory(): Promise<void> {
+    this.nfcHistoryError = '';
+    try {
+      const response = await this.apiGet('/api/nfc/proofs');
+      this.nfcHistory = this.mapArray(response['proofs']).map((raw: Record<string, Object>): NfcHistoryItem => {
+        const reward = this.mapValue(raw['reward']);
+        const points = this.mapValue(reward['points']);
+        return { id: this.textValue(raw['id']), title: this.textValue(raw['createdAt']),
+          detail: '对方 ' + this.textValue(raw['peerUserId']) + ' · 积分 +' + this.numberText(points['awarded']) };
+      });
+    } catch (error) {
+      this.nfcHistoryError = '历史记录加载失败：' + String(error);
     }
   }
 
   private stopNfc(): void {
+    this.nfcGeneration += 1;
+    if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
+    this.nfcTimer = -1;
+    if (this.nfcSessionId.length > 0 && !this.nfcCompleted && this.authToken.length > 0) {
+      const sessionId = this.nfcSessionId;
+      this.saveNfcCheckpoint('cancel').then(() => this.cancelNfcSession(sessionId)).catch(() => {
+        this.backendStatus = '取消意图未能保存，请从碰一碰记录恢复后重试；会话会自动过期';
+      });
+    }
+    this.nfcSessionId = '';
+    this.nfcHostChallenge = '';
+    this.nfcHostPayload = null;
     this.nfcManager.stop();
     this.nfcActive = false;
     this.nfcRole = 'choose';
@@ -1435,6 +1609,113 @@ struct Index {
     this.nfcPending = null;
     this.nfcStatus = '选择你在这次碰一碰里的角色';
     this.nfcResult = '';
+  }
+
+  private activateNfcHost(payload: NfcHostPayload): void {
+    this.nfcActive = this.nfcManager.startHost(payload, (message: string) => {
+      this.nfcStatus = message;
+    }, (challenge: string) => {
+      this.nfcHostChallenge = challenge;
+      this.saveNfcCheckpoint('host_observed').catch(() => {
+        this.nfcStatus = '本机交换记录保存失败，确认前将重试保存';
+      });
+    });
+  }
+
+  private async saveNfcCheckpoint(stage: string): Promise<void> {
+    const host = this.nfcHostPayload;
+    const reader = this.nfcPending;
+    if (this.nfcSessionId.length === 0 || this.currentUserId.length === 0 || this.nfcCompleted) return;
+    const saved: SavedNfcSession = {
+      ownerUserId: this.currentUserId, baseUrl: this.apiBaseUrl, sessionId: this.nfcSessionId,
+      role: this.nfcRole, stage,
+      placeId: this.nfcRole === 'host' ? (host?.placeId || '') : (reader?.placeId || ''),
+      expiresAt: this.nfcRole === 'host' ? (host?.expiresAt || '') : (reader?.expiresAt || ''),
+      touchToken: this.nfcRole === 'host' ? (host?.touchToken || '') : (reader?.touchToken || ''),
+      challenge: this.nfcRole === 'host' ? this.nfcHostChallenge : (reader?.challenge || ''),
+      hostUserId: this.nfcRole === 'host' ? this.currentUserId : (reader?.hostUserId || '')
+    };
+    await SessionVault.saveNfc(saved);
+  }
+
+  private async restoreNfcSession(): Promise<void> {
+    if (this.nfcRestoring || this.authToken.length === 0) return;
+    this.nfcRestoring = true;
+    const owner = this.currentUserId;
+    const baseUrl = this.apiBaseUrl;
+    const generation = this.nfcGeneration;
+    try {
+      const saved = await SessionVault.loadNfc(owner, baseUrl);
+      if (generation !== this.nfcGeneration || owner !== this.currentUserId || baseUrl !== this.apiBaseUrl || this.authToken.length === 0) return;
+      if (saved === null) return;
+      this.nfcManager.stop();
+      if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
+      this.nfcTimer = -1;
+      this.page = 'nfcTouch';
+      this.nfcKind = 'personal';
+      this.nfcRole = saved.role;
+      this.nfcSessionId = saved.sessionId;
+      this.nfcCompleted = false;
+      this.nfcHostChallenge = saved.role === 'host' ? saved.challenge : '';
+      const payload: NfcPeerPayload = { sessionId: saved.sessionId, placeId: saved.placeId,
+        touchToken: saved.touchToken, hostUserId: saved.hostUserId, expiresAt: saved.expiresAt, challenge: saved.challenge };
+      const hostPayload: NfcHostPayload = { sessionId: saved.sessionId, placeId: saved.placeId,
+        touchToken: saved.touchToken, hostUserId: saved.hostUserId, expiresAt: saved.expiresAt };
+      this.nfcPending = saved.role === 'reader' ? payload : null;
+      this.nfcHostPayload = saved.role === 'host' ? hostPayload : null;
+      this.nfcStep = 'recover';
+      this.nfcStatus = '正在核对上一次碰一碰的服务端状态…';
+      let response: Record<string, Object>;
+      try {
+        response = await this.apiGet('/api/nfc/sessions/' + encodeURIComponent(saved.sessionId));
+      } catch (error) {
+        // A reader is not a server-side participant until its first confirmation.
+        if (generation !== this.nfcGeneration || saved.sessionId !== this.nfcSessionId) return;
+        if ((error as ApiResponseError).status === 404 && saved.role === 'reader') {
+          if (Date.parse(saved.expiresAt) <= Date.now()) {
+            await SessionVault.clearNfc(saved.sessionId);
+            this.nfcStep = 'ended';
+            this.nfcStatus = '上一次碰触未确认或已失效，请重新开始';
+          } else if (saved.stage === 'cancel') {
+            this.nfcStep = 'recover';
+            this.nfcStatus = '服务端尚未绑定这次读取，取消意图已保留，请稍后重试恢复以核对结果';
+          } else {
+            this.nfcStep = 'sense';
+            this.nfcStatus = '已恢复本机读取记录；请再次核对现场本人后确认';
+          }
+          return;
+        }
+        if ((error as ApiResponseError).status === 404 && saved.role === 'host') {
+          await SessionVault.clearNfc(saved.sessionId);
+          this.nfcStep = 'ended';
+          this.nfcStatus = '服务端已无此会话，请重新发起';
+          return;
+        }
+        throw new Error(String(error));
+      }
+      const status = this.textValue(response['status']);
+      if (generation !== this.nfcGeneration || saved.sessionId !== this.nfcSessionId) return;
+      if (saved.stage === 'cancel' && (status === 'waiting' || status === 'awaiting_host')) {
+        const body: NfcDecisionBody = { action: 'cancel', challenge: '' };
+        response = await this.apiPost('/api/nfc/sessions/' + encodeURIComponent(saved.sessionId) + '/decision', body);
+      }
+      await this.applyNfcStatus(response);
+      if (generation !== this.nfcGeneration || saved.sessionId !== this.nfcSessionId) return;
+      if (this.nfcCompleted || this.nfcStep === 'ended') return;
+      if (status === 'waiting' && saved.role === 'host') {
+        this.nfcStep = 'wait';
+        if (saved.challenge.length === 0) this.activateNfcHost(hostPayload);
+        else this.nfcStatus = '已恢复交换记录，等待读取方提交确认';
+      }
+      this.startNfcPolling();
+    } catch (error) {
+      if (generation === this.nfcGeneration) {
+        this.nfcStatus = '恢复暂未完成，记录已保留：' + String(error);
+        this.nfcStep = 'recover';
+      }
+    } finally {
+      this.nfcRestoring = false;
+    }
   }
 
   // ----- 商家碰一碰(碰门贴 → 打卡/支付 → 评价地点/物品 → 纪念徽章)-----
@@ -1569,6 +1850,8 @@ struct Index {
   aboutToDisappear(): void {
     this.stopChatPolling();
     this.nfcManager.stop();
+    if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
+    this.nfcTimer = -1;
   }
 
   build() {
@@ -3817,7 +4100,11 @@ struct Index {
 
   @Builder
   PersonalNfcFlow() {
-    if (this.nfcStep === 'idle') {
+    Text(this.nfcStatus).fontSize(12).fontColor(C_MUTED).width('100%').margin({ top: 10 });
+    if (this.nfcStep === 'recover') {
+      Button('重试恢复').enabled(!this.nfcRestoring).onClick(() => { this.restoreNfcSession(); });
+      Button('取消本次碰触').onClick(() => { this.stopNfc(); });
+    } else if (this.nfcStep === 'idle') {
       Text('选择角色')
         .fontSize(11)
         .fontWeight(FontWeight.Bold)
@@ -3830,7 +4117,7 @@ struct Index {
         this.NfcRoleCard('主动碰 · 读取', 'ISO-DEP 读取对方令牌', false, true, () => { this.startNfcReader(); });
       }
       .width('100%');
-      Text('首次见面需双向确认；已是好友碰面免确认，直接掉落 3D 纪念徽章 + 好感度。')
+      Text('双方确认后建立连接；同一对用户每天奖励一次。当前尚无硬件或 GPS 到场认证。')
         .fontSize(13)
         .fontColor(C_MUTED)
         .lineHeight(20)
@@ -3857,7 +4144,7 @@ struct Index {
             .fontWeight(FontWeight.Bold)
             .fontColor(C_INK)
             .width('100%');
-          Text('读书 / 咖啡 · 距 0.3m')
+          Text('请核对现场本人；距离未经定位认证')
             .fontSize(12)
             .fontColor(C_MUTED)
             .margin({ top: 4 });
@@ -3872,6 +4159,7 @@ struct Index {
       .borderRadius(15)
       .margin({ top: 12 });
       Button('确认碰到本人')
+        .enabled(!this.nfcBusy)
         .width('100%')
         .height(54)
         .fontSize(16)
@@ -3890,8 +4178,15 @@ struct Index {
         .onClick(() => { this.stopNfc(); });
     } else if (this.nfcStep === 'confirm') {
       this.NfcStatusBlock('◌', '你已确认 ✓，等待对方确认…', '双方都确认见过面，才会建立可信连接。');
+      Text(this.nfcStatus).fontColor(C_MUTED).width('100%');
+      Button('取消').onClick(() => { this.stopNfc(); });
+    } else if (this.nfcStep === 'ended') {
+      Text(this.nfcStatus).fontColor(C_ORANGE).width('100%');
+      Button('重新开始').onClick(() => { this.stopNfc(); });
     } else if (this.nfcStep === 'done') {
-      this.NfcStatusBlock('✓', '可信连接已建立', '你们在真实地点碰过面并互评，双方可信度 +1，现在可以聊天。');
+      this.NfcStatusBlock('✓', '双方连接已建立', this.nfcStatus);
+      Text('好感度 ' + this.nfcAffinityText + ' · 积分 ' + this.nfcPointsText).fontColor(C_DEEP);
+      Text(this.nfcBadgeText).fontColor(C_MUTED);
       Button('进入聊天')
         .width('100%')
         .height(54)
@@ -4405,8 +4700,17 @@ struct Index {
             .borderRadius(16)
             .margin({ bottom: 12 })
             .onClick(() => this.go('nfcTouch'));
-          this.ListCard('NFC', '碰一碰记录', '最近 7 次真实见过的人');
-          this.ListCard('开', '碰一碰已开启', '累计交换 27 次');
+          if (this.nfcHistoryError.length > 0) {
+            Text(this.nfcHistoryError).fontColor(C_ORANGE);
+          }
+          Button('刷新记录').onClick(() => { this.loadNfcHistory(); });
+          Button('恢复未结束的碰一碰').onClick(() => { this.restoreNfcSession(); });
+          if (this.nfcHistory.length === 0) {
+            Text('暂无碰面记录').fontColor(C_MUTED);
+          }
+          ForEach(this.nfcHistory, (item: NfcHistoryItem) => {
+            this.ListCard('NFC', item.title, item.detail);
+          }, (item: NfcHistoryItem) => item.id);
         } else {
           this.ListCard('隐', '隐私设置', '今天不想被发现 / 隐身模式');
           this.ListCard('通', '通知设置', '活动提醒、连接请求、地点广场');

@@ -1,6 +1,7 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import cardEmulation from '@ohos.nfc.cardEmulation';
 import tag from '@ohos.nfc.tag';
+import util from '@ohos.util';
 
 export interface NfcElementName {
   bundleName: string;
@@ -35,6 +36,8 @@ export default class NfcPeerManager {
   private hostPayload: NfcHostPayload | null = null;
   private readerActive: boolean = false;
   private hostStatus: ((message: string) => void) | null = null;
+  private hostExchange: ((challenge: string) => void) | null = null;
+  private selectedChallenge: string = '';
   private readerSuccess: ((payload: NfcPeerPayload) => void) | null = null;
   private readerError: ((message: string) => void) | null = null;
 
@@ -82,11 +85,7 @@ export default class NfcPeerManager {
   }
 
   private randomChallenge(): number[] {
-    const bytes: number[] = [];
-    for (let index = 0; index < 12; index++) {
-      bytes.push(Math.floor(Math.random() * 256));
-    }
-    return bytes;
+    return this.hexToBytes(util.generateRandomUUID(true).replace(/-/g, '').slice(0, 24));
   }
 
   private buildSelectAidApdu(): number[] {
@@ -109,7 +108,8 @@ export default class NfcPeerManager {
   }
 
   private isSelectAid(command: number[]): boolean {
-    return command.length >= 5 && command[0] === 0x00 && command[1] === 0xA4 && command[2] === 0x04;
+    return command.length >= 5 && command[0] === 0x00 && command[1] === 0xA4 && command[2] === 0x04 &&
+      this.bytesToHex(command.slice(5, 5 + command[4])).toUpperCase() === SMALLWORLD_AID;
   }
 
   private isReadToken(command: number[]): boolean {
@@ -153,7 +153,18 @@ export default class NfcPeerManager {
     }
 
     const challengeLength = command[4];
+    if (challengeLength !== 12 || command.length < 5 + challengeLength ||
+      Date.parse(this.hostPayload.expiresAt) <= Date.now()) {
+      this.sendHceResponse(STATUS_COMMAND_NOT_SUPPORTED);
+      return;
+    }
     const challengeBytes = command.slice(5, 5 + challengeLength);
+    const challenge = this.bytesToHex(challengeBytes);
+    if (this.selectedChallenge.length > 0 && this.selectedChallenge !== challenge) {
+      this.sendHceResponse(STATUS_COMMAND_NOT_SUPPORTED);
+      return;
+    }
+    this.selectedChallenge = challenge;
     const peerPayload: NfcPeerPayload = {
       sessionId: this.hostPayload.sessionId,
       touchToken: this.hostPayload.touchToken,
@@ -166,16 +177,18 @@ export default class NfcPeerManager {
     response.push(STATUS_OK[0]);
     response.push(STATUS_OK[1]);
     this.sendHceResponse(response);
+    if (this.hostExchange) this.hostExchange(peerPayload.challenge);
     if (this.hostStatus) {
       this.hostStatus('近场令牌已交给另一部手机，等待双方确认');
     }
   };
 
-  startHost(payload: NfcHostPayload, status: (message: string) => void): boolean {
+  startHost(payload: NfcHostPayload, status: (message: string) => void, exchanged?: (challenge: string) => void): boolean {
     this.stopReader();
     this.stopHost();
     this.hostPayload = payload;
     this.hostStatus = status;
+    this.hostExchange = exchanged || null;
 
     try {
       if (!cardEmulation.hasHceCapability()) {
@@ -196,6 +209,8 @@ export default class NfcPeerManager {
   }
 
   stopHost(): void {
+    this.hostExchange = null;
+    this.selectedChallenge = '';
     if (!this.hceService) {
       this.hostPayload = null;
       return;
