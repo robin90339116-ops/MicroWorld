@@ -658,8 +658,9 @@ async function main() {
         currency: 'AUD'
       })
     });
-    assert(merchantPayment.response.status === 201, `merchant payment failed: ${JSON.stringify(merchantPayment.body)}`);
-    assert(merchantPayment.body.order && merchantPayment.body.order.status === 'paid', 'merchant payment order missing');
+    assert(merchantPayment.response.status === 503, 'unconfigured payment must fail closed');
+    assert(merchantPayment.body.error === 'PAYMENT_NOT_CONFIGURED', 'payment availability error missing');
+    assert(!merchantPayment.body.order, 'unconfigured payment must not create a paid order');
 
     const merchantItemReview = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/item-reviews`, {
       method: 'POST',
@@ -671,8 +672,8 @@ async function main() {
         comment: '适合低压力碰面前喝一杯。'
       })
     });
-    assert(merchantItemReview.response.status === 201, `merchant item review failed: ${JSON.stringify(merchantItemReview.body)}`);
-    assert(merchantItemReview.body.review && merchantItemReview.body.review.stars === 5, 'merchant item review body mismatch');
+    assert(merchantItemReview.response.status === 403, 'unverified payment must not unlock item review');
+    assert(merchantItemReview.body.error === 'VERIFIED_PAYMENT_REQUIRED', 'verified payment gate missing');
 
     // 评价地点(设计 p2b-rate):打卡后可评价,完成即发放商家纪念徽章 + 积分。
     const merchantPlaceReview = await request(`/api/merchant/taps/${encodeURIComponent(tapId)}/place-reviews`, {
@@ -717,7 +718,7 @@ async function main() {
     });
     assert(merchantTapList.response.ok, 'merchant tap list failed');
     assert(merchantTapList.body.contract === 'SmallWorld Merchant Tap v1', 'merchant tap list contract marker missing');
-    assert(merchantTapList.body.taps.some(tap => tap.id === tapId && tap.orderCount >= 1 && tap.itemReviewCount >= 1), 'merchant tap list missing completed tap');
+    assert(merchantTapList.body.taps.some(tap => tap.id === tapId && tap.orderCount === 0 && tap.itemReviewCount === 0 && tap.placeReviewCount === 1), 'failed payment must leave no order or item review');
 
     const aiRoute = await request('/api/explore/ai-route', { method: 'POST', body: JSON.stringify({}) });
     assert(aiRoute.response.status === 501, 'deferred AI route should return 501');

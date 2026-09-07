@@ -1761,17 +1761,8 @@ struct Index {
   }
 
   private async doMerchantPay(): Promise<void> {
-    if (this.merchantTapId.length === 0) {
-      return;
-    }
-    try {
-      const body: MerchantPayBody = { itemName: this.merchantItemName, amount: 28, currency: 'CNY' };
-      await this.apiPost('/api/merchant/taps/' + this.merchantTapId + '/payments', body);
-      this.merchantPaid = true;
-      this.merchantStatus = '支付成功';
-    } catch (error) {
-      this.merchantStatus = '支付失败：' + String(error);
-    }
+    this.merchantPaid = false;
+    this.merchantStatus = '真实支付尚未开通，未创建订单或扣款。请使用商家现有收款方式；App 暂不开放商品评价。';
   }
 
   private toggleMerchantTag(tag: string): void {
@@ -4359,7 +4350,7 @@ struct Index {
           .margin({ top: 20, bottom: 10 });
         Row() {
           this.MerchantActionCard('到店打卡', '城市足迹 +1', this.merchantCheckedIn, false, () => { this.doMerchantCheckin(); });
-          this.MerchantActionCard('支付', this.merchantItemName + ' · ¥28', this.merchantPaid, true, () => { this.doMerchantPay(); });
+          this.MerchantActionCard('支付未开通', '点击查看说明 · 不会扣款', false, true, () => { this.doMerchantPay(); });
         }
         .width('100%');
 
@@ -4383,7 +4374,8 @@ struct Index {
           .borderRadius(16)
           .margin({ top: 18 })
           .onClick(() => { if (this.merchantCheckedIn) { this.merchantStars = 5; this.merchantTags = []; this.go('merchantRatePlace'); } });
-        Button('评价消费物品')
+        Button('商品评价暂未开放')
+          .enabled(false)
           .width('100%')
           .height(50)
           .fontSize(15)

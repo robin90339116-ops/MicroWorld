@@ -63,7 +63,9 @@ function merchantGuardrails() {
     distinctConsumerAndMerchantDevices: true,
     separatedFromPhoneToPhoneProof: true,
     doesNotCreateSocialRelationship: true,
-    itemReviewScope: 'consumed-item'
+    itemReviewScope: 'consumed-item',
+    paymentAvailable: false,
+    itemReviewAvailable: false
   };
 }
 
@@ -178,31 +180,14 @@ function merchantPayment(data, account, tapId, body, options) {
     return { status: 404, body: { error: 'TAP_NOT_FOUND', message: '商家碰一碰记录不存在' } };
   }
 
-  const amount = Math.round(Math.max(0, Number(body.amount || 0)) * 100) / 100;
-  const order = {
-    id: options.createId('merchant_order'),
-    tapId,
-    placeId: tap.placeId,
-    userId: account.id,
-    itemName: String(body.itemName || 'Flat White').slice(0, 80),
-    amount,
-    currency: String(body.currency || 'AUD').slice(0, 8),
-    status: 'paid',
-    createdAt: new Date().toISOString()
-  };
-
-  arrayOf(data, 'merchantOrders').push(order);
-  tap.status = 'paid';
-  tap.lastOrderId = order.id;
-  options.persist(data);
-
+  // No provider adapter has been configured. Never trust a client-reported
+  // amount, transaction ID or success flag as proof of payment.
   return {
-    status: 201,
+    status: 503,
     body: {
       contract: MERCHANT_TAP_CONTRACT,
-      message: '支付记录已完成',
-      order,
-      tap: publicMerchantTap(data, tap, options),
+      error: 'PAYMENT_NOT_CONFIGURED',
+      message: '真实支付尚未开通，未创建订单或扣款，请使用商家现有收款方式；暂不开放 App 商品评价',
       guardrails: merchantGuardrails()
     }
   };
@@ -214,37 +199,14 @@ function merchantItemReview(data, account, tapId, body, options) {
     return { status: 404, body: { error: 'TAP_NOT_FOUND', message: '商家碰一碰记录不存在' } };
   }
 
-  // 设计约束:支付后才可评价消费物品,更可信。
-  const paidOrders = arrayOf(data, 'merchantOrders').filter(order => order.tapId === tapId);
-  if (paidOrders.length === 0) {
-    return { status: 403, body: { error: 'PAYMENT_REQUIRED', message: '支付后才可评价消费物品，更可信' } };
-  }
-
-  const stars = Math.max(1, Math.min(5, Number(body.stars || 5)));
-  const review = {
-    id: options.createId('item_review'),
-    tapId,
-    placeId: tap.placeId,
-    userId: account.id,
-    itemName: String(body.itemName || '消费物品').slice(0, 80),
-    stars,
-    tags: Array.isArray(body.tags) ? body.tags.map(tag => String(tag).slice(0, 24)).slice(0, 8) : [],
-    comment: String(body.comment || '').slice(0, 240),
-    createdAt: new Date().toISOString()
-  };
-
-  arrayOf(data, 'itemReviews').push(review);
-  tap.status = 'reviewed';
-  tap.lastItemReviewId = review.id;
-  options.persist(data);
-
+  // Legacy orders were generated without provider verification. They must not
+  // unlock reviews. Re-enable only with server-verified, order-bound eligibility.
   return {
-    status: 201,
+    status: 403,
     body: {
       contract: MERCHANT_TAP_CONTRACT,
-      message: '消费物品评价已提交',
-      review,
-      tap: publicMerchantTap(data, tap, options),
+      error: 'VERIFIED_PAYMENT_REQUIRED',
+      message: '商品评价需要支付平台核验的订单；真实支付尚未开通，旧模拟记录和线下付款不能解锁评价',
       guardrails: merchantGuardrails()
     }
   };
