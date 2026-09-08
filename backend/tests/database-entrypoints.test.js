@@ -31,3 +31,9 @@ test('database worker refuses direct use against a caller-selected business tabl
   assert.equal(result.status, 1);
   assert.doesNotMatch(result.stderr, /postgres:\/\//);
 });
+
+test('TLS acceptance requires explicit isolated Docker mode before creating fixtures', () => {
+  const result = spawnSync(process.execPath, [path.join(__dirname, 'database-tls.js')], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stdout, /PASS/);
+});

@@ -11,6 +11,21 @@ on:
 permissions:
   contents: read
 jobs:
+  postgres-tls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run test:db:tls
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10
