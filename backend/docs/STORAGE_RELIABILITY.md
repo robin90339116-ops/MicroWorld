@@ -25,7 +25,7 @@
 - `npm run smoke:storage`：创建临时目录，在真实后端子进程中注册账号、重启并恢复登录会话；主动损坏/移除临时文件后检查 503 且不自动重置，再显式恢复测试备份、重启并登录。
 - `npm run smoke`：现有接口端到端回归。以上均非真实云数据库测试，也非真实断电试验。
 
-## 数据库模式：事务改造已实现，真实数据库验收待完成
+## 数据库模式：事务改造及隔离 PostgreSQL 16 验收通过
 
 - HTTP 请求正文先完整读取并限制为原有 1MB 上限与 10 秒读取期限，再开始数据库事务，避免慢上传长期持锁。
 - 请求取得 singleton 行锁并读取最新数据；业务读写限于 AsyncLocalStorage 请求上下文，禁止绕过事务直接读写。脏状态在事务中 UPDATE，收到 COMMIT 确认后才发送缓存的 HTTP 响应，注册令牌也不会提前发送。
@@ -35,14 +35,16 @@
 - TLS 默认校验证书；私有 CA 显式配置。连接 URL 中 SSL 覆盖参数被拒绝，表名和连接池大小严格校验。不再用 huawei-gaussdb 健康标记冒充云连接；当前驱动返回 postgres。
 - `npm run smoke:db` 必须提供数据库地址和 pg 驱动，始终使用随机隔离测试表并在结束时清理该表。禁止直接带数据库地址运行普通 smoke，防止污染业务表。
 
-已安装 pg 并提交依赖锁文件；本机仍没有可运行的 PostgreSQL 或 Docker，尚未执行真实数据库测试。现有数据库单元测试使用模拟连接与行锁，并直接执行真实注册 HTTP 处理函数，验证响应等待、回滚及提交不确定性；不证明真实 SQL/驱动或云兼容性。openGauss 须单独验证，不因协议相似就声称支持。
+已安装 pg 并提交依赖锁文件；本机仍没有可运行的 PostgreSQL 或 Docker，但 GitHub Actions 已完成真实 PostgreSQL 16 隔离验收。数据库单元测试仍使用模拟连接与行锁；实库证据来自独立的 test:db 与 smoke:db，不能混为同一类测试。openGauss 须单独验证，不因协议相似就声称支持。
 
-## 真实数据库验收入口（已交付脚本，执行待解阻）
+## 真实数据库验收入口与结果
 
 - 在 backend 运行 `npm ci --ignore-scripts`，向环境配置独立测试库的 `SMALLWORLD_DATABASE_URL`，再运行 `npm run test:db` 和 `npm run smoke:db`。仅本地隔离明文测试可以使用 `SMALLWORLD_DATABASE_SSL=disable`。
 - `test:db` 使用 pg 驱动和真实 SQL，不提供模拟或文件回退。两个独立 Node 进程各提交 20 次读改写，第三个新进程应读到 40；随后检查业务回滚、真实行锁超时后恢复，以及损坏/缺失状态不重建。
 - 测试生成自己的随机表，忽略传入的业务表名，结束时只清理自己创建的测试表。请使用独立测试数据库，不要对生产实例进行故障验收。子进程有 30 秒上限。
-- GitHub 流程模板位于 `backend/ci/postgres.yml`；它**尚未启用**，需具备 workflow 权限后复制到 `.github/workflows/postgres.yml`。模板使用临时 PostgreSQL 16 容器，无业务凭据、无部署步骤；设计参照 [GitHub 官方服务容器文档](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers)。
-- 本次阻碍：Homebrew 普通/预编译安装均在依赖阶段被旧 Xcode/命令行工具拒绝；没有升级或删除 Xcode。GitHub 当前账号有 repo 权限但没有 workflow 权限，未切换账号或扩权。实际数据库验收结果仍为空，不能把脚本交付写成测试通过。
+- GitHub 流程已启用，位于 `.github/workflows/postgres.yml`。使用临时 PostgreSQL 16 容器，无业务凭据、无部署步骤；设计参照 [GitHub 官方服务容器文档](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers)。
+- 用户明确同意并完成 workflow 补充授权后，改用 GitHub 验收，未升级或删除本机 Xcode。2026-09-08 [运行 34188339789](https://github.com/robin90339116-ops/MicroWorld/actions/runs/34188339789) 对提交 `4e92b290ba5e0dcf92179866d8ddef2621a8b143` 全部通过：71 项后端测试、文件接口及重启回归、实库多进程/回滚/锁超时/异常状态测试、实库完整 HTTP 回归。
+- 首轮实库回归暴露奖励快照测试依赖 JSON 字段顺序的问题；已改为 deepStrictEqual，仍严格比较全部字段和值。[PostgreSQL JSONB 不保留对象键顺序](https://www.postgresql.org/docs/16/datatype-json.html)，不应使用序列化字符串相等判断业务对象一致。
+- 当前实库使用隔离容器和关闭 TLS 的测试连接；未验证云端证书、华为云网络/权限、实际断网丢失提交回执、数据库崩溃恢复、生产备份恢复或双机 NFC。新进程读取测试不等于数据库进程重启测试。
 
 不要将本次改造表述为生产数据库部署完成。真实华为云资源和凭据须通过安全配置提供，不能写入 Git。

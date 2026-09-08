@@ -1,4 +1,4 @@
-> 当前状态：PostgreSQL 事务驱动已改造，但尚未连接真实数据库或华为云。以下部署步骤需实际验证；openGauss 不作为已验证兼容目标。TLS 与测试入口以 STORAGE_RELIABILITY.md 为准。
+> 当前状态：已通过 GitHub Actions 中真实 PostgreSQL 16 的隔离验收，尚未连接华为云。以下云部署步骤需实际验证；openGauss 不作为已验证兼容目标。验收证据、TLS 与测试入口以 STORAGE_RELIABILITY.md 为准。
 
 # MicroWorld 华为云部署指引(登录注册 + 数据存储)
 
