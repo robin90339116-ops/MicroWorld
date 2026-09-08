@@ -72,6 +72,39 @@ async function main() {
       assert.equal(await store.runRequest(() => store.readRaw().count), 1);
     } finally { await store.close(); }
     console.log('PASS: production store commits and reads back over verified TLS');
+    const interrupted = new Client(databaseConnectionOptions(url, env));
+    interrupted.on('error', () => {});
+    try {
+      await interrupted.connect();
+      await interrupted.query('BEGIN');
+      await interrupted.query("UPDATE tls_state SET data = '{\"count\":999}'::jsonb WHERE id = 'singleton'");
+      // Target only the container created by this invocation; keep its volume
+      // so startup must recover the original cluster, not seed a replacement.
+      run('docker', ['kill', '--signal=KILL', name]);
+    } finally { await interrupted.end(); }
+    run('docker', ['start', name]);
+    ready = false;
+    for (let i = 0; i < 30; i++) {
+      try { ready = await connect(url, env); if (ready) break; } catch {}
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    assert.equal(ready, true, 'same database container must recover after SIGKILL');
+    // Read directly BEFORE store.init(), which would seed a missing singleton.
+    // This ensures accidental data loss/reinitialization cannot pass the test.
+    const recovered = new Client(databaseConnectionOptions(url, env));
+    try {
+      await recovered.connect();
+      const rows = (await recovered.query("SELECT data FROM tls_state WHERE id = 'singleton'")).rows;
+      assert.deepEqual(rows, [{ data: { count: 1 } }]);
+    } finally { await recovered.end(); }
+    const restarted = createPostgresStore({ databaseUrl: url, seed: { count: -1 }, env });
+    try {
+      await restarted.init();
+      assert.equal(await restarted.runRequest(() => restarted.readRaw().count), 1);
+      await restarted.runRequest(() => restarted.writeRaw({ count: 2 }));
+      assert.equal(await restarted.runRequest(() => restarted.readRaw().count), 2);
+    } finally { await restarted.close(); }
+    console.log('PASS: PostgreSQL SIGKILL recovery preserves committed data, rolls back uncommitted SQL, and accepts new commits');
     const smoke = spawnSync(process.execPath, [path.join(__dirname, 'database-smoke.js')], {
       env: { ...process.env, SMALLWORLD_DATABASE_URL: url, SMALLWORLD_DATABASE_CA: ca, SMALLWORLD_DATABASE_SSL: 'verify-full' },
       stdio: 'inherit', timeout: 120000
