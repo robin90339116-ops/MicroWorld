@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { deepStrictEqual } = require('node:assert');
 
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.SMALLWORLD_SMOKE_PORT || 19000 + Math.floor(Math.random() * 1000));
@@ -716,7 +717,10 @@ async function main() {
       body: JSON.stringify({ stars: 5, tags: ['咖啡赞', '环境好', '适合独处'], comment: 'smoke 到店评价' })
     })));
     assert(reviewRetries.every(result => result.response.status === 200 && result.body.review.id === merchantPlaceReview.body.review.id), 'concurrent retries must reuse the original review');
-    assert(reviewRetries.every(result => JSON.stringify(result.body.reward) === JSON.stringify(merchantPlaceReview.body.reward)), 'retry must return original reward snapshot');
+    // JSONB may reorder object keys; compare every value, not serialization order.
+    for (const result of reviewRetries) {
+      deepStrictEqual(result.body.reward, merchantPlaceReview.body.reward, 'retry must return original reward snapshot');
+    }
     const merchantProgress = await request(`/api/merchant/terminals/sessions/${proof.sessionId}`, { headers: authHeaders(reader.body.token) });
     const buyerProgress = await request(`/api/merchant/terminals/sessions/${proof.sessionId}`, { headers: authHeaders(token) });
     assert(merchantProgress.response.ok && merchantProgress.body.session.reviewed === true && merchantProgress.body.session.reward === null, 'merchant progress must omit consumer reward details');
