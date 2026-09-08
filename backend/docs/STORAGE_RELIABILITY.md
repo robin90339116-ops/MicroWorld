@@ -59,3 +59,13 @@
 - 此证据是事务提交前的单连接终止与恢复，不是整个数据库进程崩溃、真实断网、COMMIT 回执丢失或生产备份恢复验收。故障注入仅存在于 tests，不新增生产接口或故障开关。
 
 机制参考：[PostgreSQL 会话终止函数](https://www.postgresql.org/docs/16/functions-admin.html)、[node-postgres 连接池事件](https://node-postgres.com/apis/pool)。
+
+## 真实 TLS 与端点身份验收
+
+2026-09-08 [运行 34198003574](https://github.com/robin90339116-ops/MicroWorld/actions/runs/34198003574) 对 `bd6a4ca` 全部通过：74 项后端测试、原有实库/故障恢复回归，以及独立 TLS 作业。
+
+- `npm run test:db:tls` 需要 Docker 与 OpenSSL；只创建独立 PostgreSQL 16 容器，忽略业务数据库地址。证书/私钥每次临时生成，不上传制品、不写入 Git；结束时清理自己的容器、匿名卷和临时目录。
+- `pg_stat_ssl` 确認真实会话加密；缺少信任或使用无关证书时连接被拒绝；证书域名与实际连接 IP 不匹配时被拒绝；测试库通过 hostnossl reject 拒绝明文。
+- 首次实测暴露 IP 连接的证书身份校验问题：pg 将现有 socket 交给 TLS，IP 连接不提供 SNI，默认校验可能使用回退主机名。驱动现在显式用连接 URL 中的地址（去掉 IPv6 方括号）调用 Node checkServerIdentity，不能用传输层的回退主机名替代目标地址。没有关闭证书链校验或允许无效证书。
+- 生产存储驱动在验证过的 TLS 连接上提交/回读成功；完整 HTTP smoke 也在同一 TLS-only 数据库通过。测试中的服务端限制仅属于隔离容器，不能推断云端已经禁止明文。
+- 此结果新增覆盖临时自签名信任与端点匹配，不等于华为云实际证书链、证书过期/轮换、多级 CA、云端网络/白名单已验收。云端必须使用实例真实地址与可信 CA，不能直接复制测试证书。
