@@ -1,5 +1,4 @@
-# Template only: copy to .github/workflows/postgres.yml after the repository
-# credential has workflow permission. This file does not enable Actions.
+# Isolated acceptance only: no production credentials or deployment actions.
 # Reference: https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers
 name: Backend PostgreSQL acceptance
 on:
