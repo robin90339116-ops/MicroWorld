@@ -39,7 +39,7 @@ async function main() {
     const binding = run('docker', ['port', name, '5432/tcp']);
     assert.match(binding, /^127\.0\.0\.1:\d+$/);
     const port = binding.split(':')[1];
-    const url = `postgres://microworld_test:isolated_tls_only@localhost:${port}/microworld_test`;
+    let url = `postgres://microworld_test:isolated_tls_only@localhost:${port}/microworld_test`;
     const ca = fs.readFileSync(path.join(dir, 'server.crt'), 'utf8');
     const env = { SMALLWORLD_DATABASE_CA: ca, SMALLWORLD_DATABASE_TABLE: 'tls_state' };
     async function connect(address, options) {
@@ -83,6 +83,11 @@ async function main() {
       run('docker', ['kill', '--signal=KILL', name]);
     } finally { await interrupted.end(); }
     run('docker', ['start', name]);
+    // Docker can allocate a different ephemeral host port on restart.
+    const recoveredBinding = run('docker', ['port', name, '5432/tcp']);
+    assert.match(recoveredBinding, /^127\.0\.0\.1:\d+$/);
+    url = `postgres://microworld_test:isolated_tls_only@localhost:${recoveredBinding.split(':')[1]}/microworld_test`;
+    console.log('Restart endpoint rediscovered; port changed: ' + (recoveredBinding !== binding));
     ready = false;
     for (let i = 0; i < 30; i++) {
       try { ready = await connect(url, env); if (ready) break; } catch {}
