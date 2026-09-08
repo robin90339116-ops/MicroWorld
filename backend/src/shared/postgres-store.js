@@ -1,5 +1,6 @@
 'use strict';
 const { AsyncLocalStorage } = require('node:async_hooks');
+const { checkServerIdentity } = require('node:tls');
 
 function failure(code, message) { const error = new Error(message); error.code = code; return error; }
 function cloneState(value) {
@@ -18,7 +19,11 @@ function databaseConnectionOptions(databaseUrl, env = process.env) {
   const mode = String(env.SMALLWORLD_DATABASE_SSL || '').toLowerCase();
   if (!['', 'verify-full', 'disable', 'false', 'off'].includes(mode)) throw failure('STORAGE_CONFIGURATION', '数据库 TLS 模式无效');
   const ssl = ['disable', 'false', 'off'].includes(mode) ? false : {
-    rejectUnauthorized: true, ...(env.SMALLWORLD_DATABASE_CA ? { ca: env.SMALLWORLD_DATABASE_CA } : {})
+    rejectUnauthorized: true,
+    // pg passes an existing socket to TLS; for IP connections there may be no
+    // SNI hostname. Validate the configured endpoint, never TLS's fallback host.
+    checkServerIdentity: (_host, cert) => checkServerIdentity(parsed.hostname.replace(/^\[|\]$/g, ''), cert),
+    ...(env.SMALLWORLD_DATABASE_CA ? { ca: env.SMALLWORLD_DATABASE_CA } : {})
   };
   const max = Number(env.SMALLWORLD_DATABASE_POOL || 4);
   if (!Number.isInteger(max) || max < 1 || max > 32) throw failure('STORAGE_CONFIGURATION', '数据库连接池大小须为 1–32');

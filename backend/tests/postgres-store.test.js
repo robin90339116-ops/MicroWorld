@@ -2,6 +2,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPostgresStore } = require('../src/shared/postgres-store');
+const { databaseConnectionOptions } = require('../src/shared/postgres-store');
+
+test('TLS identity is bound to configured database address even if transport supplies localhost', () => {
+  const certificate = { subjectaltname: 'DNS:localhost', subject: { CN: 'localhost' } };
+  const ip = databaseConnectionOptions('postgres://127.0.0.1/test', {}).ssl;
+  assert.equal(ip.checkServerIdentity('localhost', certificate).code, 'ERR_TLS_CERT_ALTNAME_INVALID');
+  const dns = databaseConnectionOptions('postgres://localhost/test', {}).ssl;
+  assert.equal(dns.checkServerIdentity('ignored-transport-host', certificate), undefined);
+  const ipv6 = databaseConnectionOptions('postgres://[::1]/test', {}).ssl;
+  assert.equal(ipv6.checkServerIdentity('localhost', certificate).code, 'ERR_TLS_CERT_ALTNAME_INVALID');
+});
 const { fakeDatabase } = require('./helpers/fake-postgres');
 function make(db, env = {}) { return createPostgresStore({ databaseUrl: 'postgres://localhost/test', seed: { count: 0 }, PoolClass: db.Pool, env }); }
 
