@@ -18,7 +18,7 @@ services:
       POSTGRES_PASSWORD: microworld
       POSTGRES_DB: microworld
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - microworld-db-data:/var/lib/postgresql/data
     healthcheck:
@@ -34,7 +34,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
     environment:
       SMALLWORLD_BACKEND_HOST: 0.0.0.0
       SMALLWORLD_BACKEND_PORT: 8787

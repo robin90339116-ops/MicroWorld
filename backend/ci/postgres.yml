@@ -1,0 +1,46 @@
+# Template only: copy to .github/workflows/postgres.yml after the repository
+# credential has workflow permission. This file does not enable Actions.
+# Reference: https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers
+name: Backend PostgreSQL acceptance
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**', '.github/workflows/postgres.yml']
+  pull_request:
+    paths: ['backend/**', '.github/workflows/postgres.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: node:22-bookworm-slim
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: microworld_test
+          POSTGRES_PASSWORD: isolated_ci_only
+          POSTGRES_DB: microworld_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - run: npm run smoke && npm run smoke:storage
+        env:
+          SMALLWORLD_CHAIN_PROVIDER: certificate
+      - run: npm run test:db && npm run smoke:db
+        env:
+          SMALLWORLD_DATABASE_URL: postgres://microworld_test:isolated_ci_only@postgres:5432/microworld_test
+          SMALLWORLD_DATABASE_SSL: disable

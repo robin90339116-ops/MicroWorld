@@ -73,13 +73,13 @@ npm run smoke:db
 # 期望结尾:SmallWorld backend smoke test passed.
 ```
 
-本地这一步通过后,上云基本只是「换连接串」。
+本地通过后，云端仍需单独验收网络、TLS、权限、备份恢复和实际数据库版本，不能只换连接串就视为上线完成。
 
 ---
 
 ## 3. 开通华为云数据库
 
-二选一(都兼容,驱动一致):
+当前目标与待评估选项：
 
 - **RDS for PostgreSQL**(最省心,标准 Postgres)。
 - **GaussDB(openGauss)** 不属于当前已验证目标，需单独完成驱动、SQL 与事务兼容性测试后再考虑。

@@ -9,8 +9,8 @@ ENV SMALLWORLD_DATA_FILE=/data/smallworld-data.json
 
 # 先安装依赖(含 pg;仅当配置 SMALLWORLD_DATABASE_URL 走华为云 GaussDB/RDS 时才实际使用)。
 # 单独一层便于利用缓存。
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 # 应用代码:server.js 依赖 src/ 下的全部业务模块与 shared/store,必须一起拷贝。
 COPY server.js data.json README.md ./
