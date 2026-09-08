@@ -3,6 +3,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const { exerciseDatabaseFaults } = require('./helpers/postgres-faults');
+
+test('fault injection rejects business tables and mismatched store scope before opening connections', async () => {
+  const isolated = 'microworld_integration_' + 'a'.repeat(24);
+  const Pool = function () { assert.fail('must not create a database connection'); };
+  for (const [table, scoped] of [['microworld_state', 'microworld_state'], [isolated, 'microworld_state']]) {
+    await assert.rejects(exerciseDatabaseFaults({ Pool, table, env: { SMALLWORLD_DATABASE_TABLE: scoped } }), /isolated/);
+  }
+});
 
 for (const script of ['database-integration.js', 'database-smoke.js']) {
   test(`${script} fails explicitly without a database URL`, () => {

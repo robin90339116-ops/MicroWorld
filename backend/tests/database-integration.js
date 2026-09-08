@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { fork } = require('node:child_process');
 const { createPostgresStore, databaseConnectionOptions } = require('../src/shared/postgres-store');
+const { exerciseDatabaseFaults } = require('./helpers/postgres-faults');
 
 async function main() {
   const url = String(process.env.SMALLWORLD_DATABASE_URL || '').trim();
@@ -67,6 +68,8 @@ async function main() {
     } finally { await blocker.query('ROLLBACK'); blocker.release(); }
     assert.equal(await store.runRequest(() => store.readRaw().count), 40);
     console.log('PASS: real row-lock timeout fails closed, next request recovers');
+
+    await exerciseDatabaseFaults({ Pool, pool, table, url, env });
 
     await pool.query(`UPDATE "${table}" SET data = '[]'::jsonb WHERE id = 'singleton'`);
     await assert.rejects(store.runRequest(() => store.readRaw()), { code: 'STORAGE_INVALID_DATA' });
