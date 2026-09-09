@@ -16,6 +16,7 @@
     "smoke:db": "node tests/database-smoke.js",
     "test:db": "node tests/database-integration.js",
     "test:db:tls": "node tests/database-tls.js --isolated-docker",
+    "db:backup": "node database-backup.js",
     "smoke:storage": "node tests/storage-smoke.js"
   },
   "dependencies": {

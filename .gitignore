@@ -24,6 +24,9 @@ backend/.env
 # Temporary exports/check artifacts
 tmp/
 backend/data.json
+backend/backups/
+*.mwbackup.json
+.microworld-backup-*/
 exports/
 entry/src/main/resources/base/media/*_backup.png
 entry/src/main/resources/base/media/*_legacy.svg

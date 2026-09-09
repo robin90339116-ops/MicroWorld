@@ -13,7 +13,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 # 应用代码:server.js 依赖 src/ 下的全部业务模块与 shared/store,必须一起拷贝。
-COPY server.js data.json README.md ./
+COPY server.js database-backup.js data.json README.md ./
 COPY src ./src
 
 # 本地/单机 file 模式的数据目录;云上可用持久卷(EVS/SFS)挂载到 /data,

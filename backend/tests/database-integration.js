@@ -5,6 +5,7 @@ const path = require('node:path');
 const { fork } = require('node:child_process');
 const { createPostgresStore, databaseConnectionOptions } = require('../src/shared/postgres-store');
 const { exerciseDatabaseFaults } = require('./helpers/postgres-faults');
+const { exerciseBackup } = require('./helpers/postgres-backup');
 
 async function main() {
   const url = String(process.env.SMALLWORLD_DATABASE_URL || '').trim();
@@ -70,6 +71,7 @@ async function main() {
     console.log('PASS: real row-lock timeout fails closed, next request recovers');
 
     await exerciseDatabaseFaults({ Pool, pool, table, url, env });
+    await exerciseBackup({ pool, table, url, env });
 
     await pool.query(`UPDATE "${table}" SET data = '[]'::jsonb WHERE id = 'singleton'`);
     await assert.rejects(store.runRequest(() => store.readRaw()), { code: 'STORAGE_INVALID_DATA' });
