@@ -1,7 +1,12 @@
-node_modules
-npm-debug.log
-.DS_Store
-server.log
-tests
-docs
-*.local
+# Only runtime code and locked dependency manifests may enter the build context.
+# In particular, never include live data, .env, backups, logs or local registries.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!server.js
+!database-backup.js
+!README.md
+!src/
+!src/**

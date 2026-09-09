@@ -37,3 +37,9 @@ test('TLS acceptance requires explicit isolated Docker mode before creating fixt
   assert.equal(result.status, 1);
   assert.doesNotMatch(result.stdout, /PASS/);
 });
+
+test('image acceptance requires explicit isolated mode before creating Docker resources', () => {
+  const result = spawnSync(process.execPath, [path.join(__dirname, 'container-smoke.js')], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stdout, /PASS/);
+});
