@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="690" viewBox="0 0 1400 690" role="img" aria-labelledby="title desc">
+  <title id="title">个人与商家双轨业务流程</title>
+  <desc id="desc">个人：发起、交换、双方确认、建立连接、聊天记录。商家：登记终端、动态凭证、打卡、评价地点、奖励结果。失败先查询原结果，支付和商品评价未开放。</desc>
+  <rect width="1400" height="690" rx="24" fill="#F4F3EC"/>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#8A9B8D"/></marker></defs>
+  <g font-family="PingFang SC, Noto Sans CJK SC, sans-serif">
+    <text x="56" y="65" font-size="30" font-weight="700" fill="#173D32">同样是碰一碰，不同的是确认与准入规则。</text>
+    <text x="56" y="104" font-size="17" fill="#63746A">按当前实现整理 · 产品流程示意 · 不代表真机、支付或上链已经验收</text>
+    <text x="56" y="167" font-size="22" font-weight="700" fill="#173D32">个人 ↔ 个人</text>
+    <text x="257" y="167" font-size="16" fill="#63746A">双方表达意愿，才建立关系；熟人复次目前也需确认。</text>
+    <g fill="#FFF" stroke="#CEDACD"><rect x="56" y="194" width="232" height="112" rx="18"/><rect x="320" y="194" width="232" height="112" rx="18"/><rect x="584" y="194" width="232" height="112" rx="18" fill="#173D32" stroke="#173D32"/><rect x="848" y="194" width="232" height="112" rx="18"/><rect x="1112" y="194" width="232" height="112" rx="18"/></g>
+    <g stroke="#8A9B8D" stroke-width="2" marker-end="url(#arrow)"><path d="M294 250H314"/><path d="M558 250H578"/><path d="M822 250H842"/><path d="M1086 250H1106"/></g>
+    <g text-anchor="middle" fill="#173D32" font-size="21" font-weight="600"><text x="172" y="239">发起会话</text><text x="436" y="239">交换会话信息</text><text x="700" y="239" fill="#FFF">双方显式确认</text><text x="964" y="239">建立连接</text><text x="1228" y="239">聊天与相遇记录</text></g>
+    <g text-anchor="middle" fill="#69796E" font-size="15"><text x="172" y="276">限时等待</text><text x="436" y="276">NFC 协议交互</text><text x="700" y="276" fill="#D7E7D9">可拒绝 / 可取消</text><text x="964" y="276">双方可见的结果</text><text x="1228" y="276">重试不重复发奖</text></g>
+    <text x="56" y="374" font-size="22" font-weight="700" fill="#173D32">个人 ↔ 商家</text>
+    <text x="257" y="374" font-size="16" fill="#63746A">服务端登记与有效打卡决定地点评价资格，不等于消费证明。</text>
+    <g fill="#FFF" stroke="#CEDACD"><rect x="56" y="401" width="232" height="112" rx="18"/><rect x="320" y="401" width="232" height="112" rx="18"/><rect x="584" y="401" width="232" height="112" rx="18" fill="#EBA86C" stroke="#EBA86C"/><rect x="848" y="401" width="232" height="112" rx="18"/><rect x="1112" y="401" width="232" height="112" rx="18"/></g>
+    <g stroke="#8A9B8D" stroke-width="2" marker-end="url(#arrow)"><path d="M294 457H314"/><path d="M558 457H578"/><path d="M822 457H842"/><path d="M1086 457H1106"/></g>
+    <g text-anchor="middle" fill="#173D32" font-size="21" font-weight="600"><text x="172" y="446">登记商家终端</text><text x="436" y="446">交换动态凭证</text><text x="700" y="446">有效打卡</text><text x="964" y="446">评价地点</text><text x="1228" y="446">原评价与奖励</text></g>
+    <g text-anchor="middle" fill="#69796E" font-size="15"><text x="172" y="483">账号 / 设备 / 地点</text><text x="436" y="483">匹配双端记录</text><text x="700" y="483" fill="#493E2E">首次打卡有时间窗口</text><text x="964" y="483">星级 / 标签 / 文字</text><text x="1228" y="483">失败先查询原结果</text></g>
+    <rect x="56" y="554" width="1288" height="82" rx="16" fill="#E5EAE0"/>
+    <text x="80" y="586" font-size="17" font-weight="600" fill="#315749">共同底线：不以客户端“成功”冒充真实结果，不因重试重复创建业务结果。</text>
+    <text x="80" y="616" font-size="16" fill="#63746A">双机体验待验收 · 支付与商品评价未开放 · 纪念凭证默认不上链 · 不声称硬件到场认证</text>
+  </g>
+</svg>
