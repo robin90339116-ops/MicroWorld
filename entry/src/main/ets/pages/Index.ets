@@ -2665,6 +2665,13 @@ struct Index {
         .height('100%');
       Column() {
         this.SearchHeader();
+        Text('示例坐标 · 非当前位置；地图出图待真机验证')
+          .fontSize(12)
+          .fontColor(C_INK)
+          .padding(8)
+          .backgroundColor('#F9FBF7')
+          .borderRadius(8)
+          .margin({ top: 8 });
         Blank();
         if (this.exploreLoading) {
           Text('正在加载地点…').padding(20).backgroundColor(C_CARD).borderRadius(16);
@@ -2726,7 +2733,7 @@ struct Index {
       this.MapPin(this.placeAt(0).shortName, 88, 260, 0);
       this.MapPin(this.placeAt(1).shortName, 238, 336, 1);
       this.MapPin(this.placeAt(2).shortName, 78, 520, 2);
-      Text('高德地图 · 墨尔本')
+      Text('地图布局示意 · 非真实底图')
         .fontSize(11)
         .fontWeight(FontWeight.Bold)
         .fontColor('#7C8378')
@@ -2952,7 +2959,7 @@ struct Index {
           .margin({ bottom: 10 })
           .onClick(() => { this.selectedActivityIndex = index; this.go('placeActivity'); });
         }, (item: string) => item);
-        this.SectionTitle('排行榜与 NFT 奖牌', '真实行为核验');
+        this.SectionTitle('排行榜与纪念徽章', '示例展示 · 非上链证明');
         ForEach(this.currentPlace().medals, (item: string) => {
           this.ListCard('🏅', item, '真实到场、任务或比赛后可领取展示');
         }, (item: string) => item);
@@ -3252,7 +3259,7 @@ struct Index {
             .height(260)
             .backgroundColor('#2B2B34')
             .borderRadius(18);
-          Text('AR 相机画面')
+          Text('AR 布局示意 · 未接入相机与实景导航')
             .fontSize(13)
             .fontColor('#CFC7E6')
             .position({ x: 18, y: 18 });
@@ -3268,7 +3275,7 @@ struct Index {
         .height(260)
         .width('100%')
         .margin({ top: 16 });
-        Button('生成 AI 轻社交路线')
+        Button('查看路线示例（未接入 AI）')
           .width('100%')
           .height(54)
           .fontColor(Color.White)
@@ -3290,7 +3297,7 @@ struct Index {
     Scroll() {
       Column() {
         this.BackHeader('AI 导游', 'routePlan');
-        Text('今天适合你的路线')
+        Text('固定路线示例 · 非实时生成')
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
           .fontColor(C_INK)
@@ -3309,7 +3316,7 @@ struct Index {
         this.ListCard('1', 'Market Lane Coffee 轻量破冰', '先从低压力咖啡空间开始，不直接强社交');
         this.ListCard('2', 'State Library 旁听读书交流', '到场后可以旁听，再决定是否加入');
         this.ListCard('3', 'Carlton Gardens 摄影角收尾漫步', '用城市观察自然结束路线');
-        Button('开始这条路线')
+        Button('返回探索（不启动导航）')
           .width('100%')
           .height(54)
           .fontColor(Color.White)
@@ -3756,7 +3763,7 @@ struct Index {
           .fontColor('#CFC7E6')
           .onClick(() => this.go('world'));
         Blank();
-        Text('完成')
+        Text('查看示例')
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor(Color.White)
@@ -3772,7 +3779,7 @@ struct Index {
           .height('100%')
           .backgroundColor('#23232B')
           .borderRadius(18);
-        Text('AR 相机画面')
+        Text('AR 布局示意 · 未接入相机')
           .fontSize(13)
           .fontColor('#CFC7E6')
           .position({ x: 22, y: 24 });
