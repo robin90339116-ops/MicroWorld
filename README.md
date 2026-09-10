@@ -62,10 +62,10 @@ npm run start:example
 
 该命令读取无秘密的 `.env.example`，默认仅监听电脑本机，文件模式保存到 `backend/data.json`。不要用示例配置运行生产业务。已有环境变量优先于示例文件，详见 [本地调试与配置安全](docs/LOCAL_DEMO_SETUP.md)。
 
-前端用 DevEco Studio 打开项目，按自己的账号与设备配置签名。手机的 `127.0.0.1` 不是电脑；真机连接需单独配置网络地址。签名、AGC 配置和云凭据不随展示材料提供。
+首次克隆时，用编辑器将 `build-profile.example.json5` 另存为根目录的 `build-profile.json5`，已有本机配置不要覆盖。前端用 DevEco Studio 打开项目，按自己的账号与设备配置签名。手机的 `127.0.0.1` 不是电脑；真机连接需单独配置网络地址。签名、AGC 配置和云凭据不随展示材料提供。
 
 - 前端主页面：[Index.ets](entry/src/main/ets/pages/Index.ets)
 - 后端模块与接口：[后端文档](backend/README.md)
 - 构建及逐阶段验证：[验收记录](docs/IMPLEMENTATION_ACCEPTANCE.md)
 
-当前展示不改变仓库访问权限。公开仓库前须检查已有 Git 历史中的签名与秘密，新增忽略规则无法清理历史记录。
+项目级签名配置已从分支历史移除，改用无凭据模板；本机配置不再跟踪。历史清理不等于凭据失效，也不能撤回旧克隆、缓存或 CI 附件。公开前仍需完成凭据轮换和历史副本检查，见 [签名与历史清理说明](docs/SIGNING_SECURITY.md)。
