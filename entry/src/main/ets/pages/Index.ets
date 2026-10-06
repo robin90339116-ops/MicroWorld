@@ -81,6 +81,118 @@ interface WorldItem {
   objectCount?: string;
 }
 
+interface MeRowItem {
+  id: string;
+  icon: string;
+  title: string;
+  body: string;
+}
+
+interface NfcReviewScores {
+  comfort: number;
+  match: number;
+  safety: number;
+  activity: number;
+  world: number;
+}
+
+interface NfcReviewBody {
+  placeId: string;
+  proofId: string;
+  scores: NfcReviewScores;
+  comment: string;
+  repeatVisit: boolean;
+}
+
+interface MomentPostBody {
+  text: string;
+  place: string;
+}
+
+interface RewardMedalItem {
+  id: string;
+  kind: string;
+  kindLabel: string;
+  name: string;
+  rarity: string;
+  tokenId: string;
+  editionNumber: string;
+  chainStatus: string;
+  earnedAt: string;
+}
+
+interface AffinityItem {
+  peerUserId: string;
+  peerName: string;
+  value: string;
+}
+
+interface ConnectionRequestItem {
+  id: string;
+  name: string;
+  source: string;
+}
+
+interface PlaceMedalItem {
+  id: string;
+  name: string;
+  glyph: string;
+  rarity: string;
+  condition: string;
+  progressLabel: string;
+  owned: boolean;
+  claimable: boolean;
+  tokenId: string;
+  chainLabel: string;
+}
+
+interface SafetyRecordItem {
+  id: string;
+  rawId: string;
+  kind: string;
+  title: string;
+  detail: string;
+  status: string;
+}
+
+interface RankItem {
+  id: string;
+  rank: string;
+  name: string;
+  meta: string;
+  score: string;
+  mine: boolean;
+}
+
+interface SafetyReportBody {
+  targetType: string;
+  targetId: string;
+  targetUserId: string;
+  reason: string;
+  placeId: string;
+  description: string;
+}
+
+interface SafetyBlockBody {
+  targetUserId: string;
+  targetName: string;
+  reason: string;
+}
+
+interface SafetyPanicBody {
+  placeId: string;
+  latitude: string;
+  longitude: string;
+  deviceId: string;
+  message: string;
+}
+
+interface SafetyPrivacyBody {
+  invisible: boolean;
+  todayHidden: boolean;
+  nfcEnabled: boolean;
+}
+
 interface ChatPerson {
   id: string;
   name: string;
@@ -334,7 +446,9 @@ const PROFILE_MENUS: ProfileMenuItem[] = [
   { icon: '⌂', label: '已加入的俱乐部', to: 'meClubs', tint: '#7A5CC0' },
   { icon: '▤', label: '个人比赛日程', to: 'meSchedule', tint: '#C2542F' },
   { icon: '◆', label: '兴趣记录数据', to: 'meInterestData', tint: '#3F8A78' },
-  { icon: '▣', label: '碰一碰信息', to: 'meNfc', tint: '#A07B34' }
+  { icon: '▣', label: '碰一碰信息', to: 'meNfc', tint: '#A07B34' },
+  { icon: '藏', label: '我的藏品与积分', to: 'meRewards', tint: '#A07B34' },
+  { icon: '盾', label: '安全中心', to: 'meSafety', tint: '#C2542F' }
 ];
 
 @Entry
@@ -403,6 +517,34 @@ struct Index {
   @State profileSubtitle: string = '读书 / 咖啡 / 城市探索';
   @State profileIntentText: string = '社交意图：遇见同频的人';
   @State profileStats: string[] = ['0', '0', '0', '0'];
+  @State profilePoints: string = '0';
+  @State rewardMedals: RewardMedalItem[] = [];
+  @State rewardAffinity: AffinityItem[] = [];
+  @State rewardError: string = '';
+  @State connectionRequests: ConnectionRequestItem[] = [];
+  @State placeMedals: PlaceMedalItem[] = [];
+  @State placeMedalNotice: string = '';
+  @State placeRatingDims: string[] = [];
+  @State safetyInvisible: boolean = false;
+  @State safetyTodayHidden: boolean = false;
+  @State safetyNfcEnabled: boolean = true;
+  @State safetyCounts: string[] = ['0', '0', '0'];
+  @State safetyRecords: SafetyRecordItem[] = [];
+  @State safetyNotice: string = '';
+  @State clubLeaderboard: RankItem[] = [];
+  @State leaderboardTitle: string = '俱乐部排行榜';
+  @State currentClubId: string = 'club-library-reading';
+  @State nfcProofId: string = '';
+  @State nfcReviewDone: boolean = false;
+  @State nfcReviewRepeat: boolean = false;
+  @State momentDraft: string = '';
+  @State clubName: string = '';
+  @State clubMeta: string = '';
+  @State clubSummary: string = '';
+  @State clubPlace: string = '';
+  @State meRows: MeRowItem[] = [];
+  @State collectibleDetailToken: string = '';
+  @State collectibleDetailText: string = '';
   @State placeRoomToken: string = '';
   @State placeRoomPosts: MomentItem[] = [];
   @State routeDistance: string = '';
@@ -494,6 +636,10 @@ struct Index {
     }
     if (this.page === 'nfcTouch' && next !== 'nfcTouch') {
       this.stopNfc();
+    }
+    // 离开地点广场(不是回到地点页)时主动关闭房间会话;回到地点页保留令牌以便领取奖牌。
+    if (this.page === 'placeChat' && next !== 'placeChat' && next !== 'place') {
+      this.closePlaceRoom();
     }
     this.page = next;
     const tab = this.tabForPage(next);
@@ -628,7 +774,8 @@ struct Index {
       path !== '/api/auth/login' && path !== '/api/auth/register') {
       headers['Authorization'] = 'Bearer ' + this.authToken;
     }
-    if (this.placeRoomToken.length > 0 && path.indexOf('/room/') >= 0) {
+    // 房间令牌:地点广场接口与地标奖牌领取都需要(领取路径不含 /room/,此前漏发导致 403)。
+    if (this.placeRoomToken.length > 0 && (path.indexOf('/room/') >= 0 || path.indexOf('/medals/') >= 0)) {
       headers['X-Place-Room-Token'] = this.placeRoomToken;
     }
     try {
@@ -671,6 +818,7 @@ struct Index {
       this.loadExploreData();
     } else if (next === 'place') {
       this.loadPlaceDetail();
+      this.loadPlaceRecognition();
     } else if (next === 'routePlan') {
       this.loadRoutePlan();
     } else if (next === 'interest') {
@@ -687,6 +835,17 @@ struct Index {
       this.loadChatMessages();
     } else if (next === 'meNfc') {
       this.loadNfcHistory();
+    } else if (next === 'meRewards') {
+      this.loadRewards();
+    } else if (next === 'meSafety') {
+      this.loadSafetyHome();
+    } else if (next === 'leaderboard') {
+      this.loadClubLeaderboard();
+    } else if (next === 'clubDetail') {
+      this.loadClubDetail();
+      this.loadClubLeaderboard();
+    } else if (next === 'meTrophies' || next === 'meClubs' || next === 'meSchedule' || next === 'meInterestData') {
+      this.loadMeFeature(next);
     }
   }
 
@@ -1015,6 +1174,14 @@ struct Index {
         });
       const newIndex = this.people.findIndex((person: ChatPerson) => person.id === selectedPersonId);
       this.selectedPersonIndex = newIndex >= 0 ? newIndex : 0;
+      this.connectionRequests = this.mapArray(response['connectionRequests']).map((item: Record<string, Object>) => {
+        const req: ConnectionRequestItem = {
+          id: this.textValue(item['id']),
+          name: this.textValue(item['name'], this.textValue(item['displayName'], '用户')),
+          source: this.textValue(item['source'], this.textValue(item['metAt'], this.textValue(item['reason'], '')))
+        };
+        return req;
+      });
       const rawMoments = this.mapArray(response['moments']);
       this.moments = rawMoments.map((item: Record<string, Object>, index: number) => {
           const fallback = MOMENTS[Math.min(index, MOMENTS.length - 1)] || MOMENTS[0];
@@ -1041,6 +1208,7 @@ struct Index {
         this.numberText(stats['repeatPlaceCount'], this.profileStats[2]),
         this.numberText(stats['friendCount'], this.profileStats[3])
       ];
+      this.profilePoints = this.numberText(stats['points'], this.profilePoints);
       const rawMenu = this.mapArray(response['menu']);
       if (rawMenu.length > 0) {
         this.profileMenus = rawMenu.map((item: Record<string, Object>, index: number) => {
@@ -1058,6 +1226,459 @@ struct Index {
       }
     } catch (error) {
       this.backendStatus = '个人中心数据需要登录或后端未连接';
+    }
+  }
+
+  // ----- 碰一碰互评(后端 /api/reviews/nfc,需真实到场凭证,仅限碰触双方)-----
+  private async submitNfcReview(): Promise<void> {
+    if (this.nfcProofId.length === 0) {
+      this.nfcStatus = '本次碰面没有可用的到场凭证，无法互评';
+      return;
+    }
+    try {
+      const scores: NfcReviewScores = { comfort: 90, match: 86, safety: 92, activity: 85, world: 80 };
+      const body: NfcReviewBody = {
+        placeId: this.currentPlace().id,
+        proofId: this.nfcProofId,
+        scores,
+        comment: '',
+        repeatVisit: this.nfcReviewRepeat
+      };
+      const response = await this.apiPost('/api/reviews/nfc', body);
+      this.nfcReviewDone = true;
+      this.nfcStatus = this.textValue(response['message'], '已提交真实碰面互评');
+      this.loadPlaceRecognition();
+    } catch (error) {
+      this.nfcStatus = '互评提交失败：' + String(error);
+    }
+  }
+
+  // ----- 动态发布(后端 /api/social/moments,仅真实见过的人可见)-----
+  private async publishMoment(): Promise<void> {
+    const text = this.momentDraft.trim();
+    if (text.length === 0 || this.authToken.length === 0) {
+      this.socialError = text.length === 0 ? '请输入动态内容' : '登录后才能发布动态';
+      return;
+    }
+    try {
+      const body: MomentPostBody = { text, place: this.currentPlace().shortName };
+      await this.apiPost('/api/social/moments', body);
+      this.momentDraft = '';
+      await this.loadSocialData();
+    } catch (error) {
+      this.socialError = '动态发布失败：' + String(error);
+    }
+  }
+
+  // ----- 地点广场:分享 / 关闭(后端 /room/shares、/room/close)-----
+  private async sharePlaceRoomPost(): Promise<void> {
+    const text = this.messageDraft.trim();
+    if (text.length === 0 || this.authToken.length === 0 || this.placeRoomToken.length === 0) {
+      this.backendStatus = '请先输入要分享的内容并确保已进入地点广场';
+      return;
+    }
+    try {
+      const body: MessageBody = { text };
+      const response = await this.apiPost('/api/places/' + this.currentPlace().id + '/room/shares', body);
+      this.messageDraft = '';
+      this.backendStatus = this.textValue(response['message'], '已分享到地点广场');
+      await this.loadPlaceRoomFeed();
+    } catch (error) {
+      this.backendStatus = '地点广场分享失败：' + String(error);
+    }
+  }
+
+  private async closePlaceRoom(): Promise<void> {
+    if (this.placeRoomToken.length === 0 || this.authToken.length === 0) return;
+    try {
+      await this.apiPost('/api/places/' + this.currentPlace().id + '/room/close', {} as Record<string, Object>);
+    } catch (error) {
+      // 关闭失败不影响离开;令牌会在服务端自然过期。
+    }
+    this.placeRoomToken = '';
+  }
+
+  // ----- 俱乐部详情(后端 /api/clubs/:id)-----
+  private async loadClubDetail(): Promise<void> {
+    const clubIds = this.currentInterest().clubIds || [];
+    if (clubIds.length > 0 && clubIds[0].length > 0) {
+      this.currentClubId = clubIds[0];
+    }
+    try {
+      const response = await this.apiGet('/api/clubs/' + this.currentClubId);
+      const club = this.mapValue(response['club']);
+      const place = this.mapValue(club['place']);
+      this.clubName = this.textValue(club['name'], '');
+      this.clubMeta = this.textValue(club['city'], '') + ' · ' + this.numberText(club['memberCount'], '0') + ' 位成员 · ' +
+        this.textValue(club['schedule'], '') + (club['verified'] === true ? ' · 已认证' : '');
+      this.clubSummary = this.textValue(club['summary'], '');
+      this.clubPlace = this.textValue(place['shortName'], this.textValue(place['name'], ''));
+    } catch (error) {
+      this.clubName = '';
+      this.clubSummary = '';
+    }
+  }
+
+  // ----- 「我」的二级页真数据(后端 /api/me/:feature,直接接受页面名作别名)-----
+  private async loadMeFeature(page: string): Promise<void> {
+    this.meRows = [];
+    if (this.authToken.length === 0) return;
+    const epoch = this.sessionEpoch;
+    try {
+      const response = await this.apiGet('/api/me/' + page);
+      if (epoch !== this.sessionEpoch) return;
+      let rows: MeRowItem[] = [];
+      if (page === 'meTrophies') {
+        rows = this.mapArray(response['trophies']).map((item: Record<string, Object>) => {
+          const row: MeRowItem = {
+            id: this.textValue(item['id']),
+            icon: this.textValue(item['icon'], '冠'),
+            title: this.textValue(item['name'], ''),
+            body: this.textValue(item['date'], '')
+          };
+          return row;
+        });
+      } else if (page === 'meClubs') {
+        rows = this.mapArray(response['clubs']).map((item: Record<string, Object>) => {
+          const row: MeRowItem = {
+            id: this.textValue(item['id']),
+            icon: this.textValue(item['icon'], '⌂'),
+            title: this.textValue(item['name'], ''),
+            body: this.numberText(item['members'], this.numberText(item['memberCount'], '0')) + ' 位成员 · ' + this.textValue(item['relationship'], '已加入')
+          };
+          return row;
+        });
+      } else if (page === 'meSchedule') {
+        rows = this.mapArray(response['schedule']).map((item: Record<string, Object>) => {
+          const row: MeRowItem = {
+            id: this.textValue(item['id']),
+            icon: this.textValue(item['day'], '·'),
+            title: this.textValue(item['name'], ''),
+            body: this.textValue(item['month'], '') + ' · ' + this.textValue(item['place'], '')
+          };
+          return row;
+        });
+      } else if (page === 'meInterestData') {
+        rows = this.mapArray(response['interests']).map((item: Record<string, Object>, index: number) => {
+          const name = this.textValue(item['name'], '');
+          const row: MeRowItem = {
+            id: name + index,
+            icon: name.slice(0, 1),
+            title: name + ' ' + this.numberText(item['count'], '0') + ' 次',
+            body: '活跃度 ' + this.numberText(item['pct'], '0') + '% · ' + this.textValue(item['source'], '')
+          };
+          return row;
+        });
+      }
+      this.meRows = rows;
+    } catch (error) {
+      if (epoch === this.sessionEpoch) this.meRows = [];
+    }
+  }
+
+  // ----- 奖励读回:积分 / 好感度 / 徽章(后端 /api/me/rewards)-----
+  private async loadRewards(): Promise<void> {
+    if (this.authToken.length === 0) {
+      this.rewardError = '登录后查看积分与藏品';
+      return;
+    }
+    const epoch = this.sessionEpoch;
+    this.rewardError = '';
+    try {
+      const response = await this.apiGet('/api/me/rewards');
+      if (epoch !== this.sessionEpoch) return;
+      this.profilePoints = this.numberText(response['points'], this.profilePoints);
+      this.rewardMedals = this.mapArray(response['medals']).map((item: Record<string, Object>) => {
+        const medal: RewardMedalItem = {
+          id: this.textValue(item['id']),
+          kind: this.textValue(item['kind'], 'landmark'),
+          kindLabel: this.textValue(item['kindLabel'], '徽章'),
+          name: this.textValue(item['name'], '纪念徽章'),
+          rarity: this.textValue(item['rarity'], 'R'),
+          tokenId: this.textValue(item['tokenId']),
+          editionNumber: this.numberText(item['editionNumber'], '0'),
+          chainStatus: this.textValue(item['chainStatus'], 'digital-certificate'),
+          earnedAt: this.textValue(item['earnedAt']).slice(0, 10)
+        };
+        return medal;
+      });
+      this.rewardAffinity = this.mapArray(response['affinity']).map((item: Record<string, Object>) => {
+        const row: AffinityItem = {
+          peerUserId: this.textValue(item['peerUserId']),
+          peerName: this.textValue(item['peerName'], '朋友'),
+          value: this.numberText(item['value'], '0')
+        };
+        return row;
+      });
+    } catch (error) {
+      if (epoch === this.sessionEpoch) this.rewardError = '积分与藏品加载失败：' + String(error);
+    }
+  }
+
+  // ----- 藏品凭证详情(后端 /api/collectibles/:tokenId)-----
+  private async loadCollectible(tokenId: string): Promise<void> {
+    if (tokenId.length === 0) return;
+    if (this.collectibleDetailToken === tokenId) {
+      this.collectibleDetailToken = '';
+      this.collectibleDetailText = '';
+      return;
+    }
+    try {
+      const response = await this.apiGet('/api/collectibles/' + tokenId);
+      const attrs = this.mapArray(response['attributes']).map((item: Record<string, Object>) => {
+        return this.textValue(item['traitType'], '') + '：' + this.textValue(item['value'], this.numberText(item['value'], ''));
+      });
+      const place = this.mapValue(response['place']);
+      this.collectibleDetailText = this.textValue(response['name'], '藏品') + ' · ' + this.textValue(response['standard'], '') +
+        '\n' + this.textValue(response['description'], '') +
+        '\n地标：' + this.textValue(place['name'], '') +
+        '\n' + attrs.join(' / ') +
+        '\n状态：' + this.chainStatusLabel(this.textValue(response['chainStatus'], 'digital-certificate')) +
+        (this.textValue(response['txHash']).length > 0 ? '\n交易：' + this.textValue(response['txHash']) : '') +
+        '\n发行：' + this.textValue(response['issuedAt']).slice(0, 10);
+      this.collectibleDetailToken = tokenId;
+    } catch (error) {
+      this.collectibleDetailText = '藏品凭证读取失败：' + String(error);
+      this.collectibleDetailToken = tokenId;
+    }
+  }
+
+  private chainStatusLabel(status: string): string {
+    if (status === 'on-chain') return '已上链';
+    if (status === 'pending-mint') return '待上链';
+    return '数字藏品凭证';
+  }
+
+  // ----- 地标奖牌:进度 / 领取(后端 /recognition + /medals/:id/claim)-----
+  private async loadPlaceRecognition(): Promise<void> {
+    try {
+      const response = await this.apiGet('/api/places/' + this.currentPlace().id + '/recognition');
+      this.placeMedals = this.mapArray(response['medals']).map((item: Record<string, Object>) => {
+        const medal: PlaceMedalItem = {
+          id: this.textValue(item['id']),
+          name: this.textValue(item['name'], '地标奖牌'),
+          glyph: this.textValue(item['glyph'], '🏅'),
+          rarity: this.textValue(item['rarity'], 'R'),
+          condition: this.textValue(item['condition']),
+          progressLabel: this.textValue(item['progressLabel'], '0/1'),
+          owned: item['owned'] === true,
+          claimable: item['claimable'] === true,
+          tokenId: this.textValue(item['tokenId']),
+          chainLabel: this.textValue(item['chainLabel'], '尚未获得')
+        };
+        return medal;
+      });
+    } catch (error) {
+      this.placeMedalNotice = '奖牌进度同步失败，继续使用本地展示';
+    }
+    try {
+      const ratingResponse = await this.apiGet('/api/places/' + this.currentPlace().id + '/rating');
+      this.placeRatingDims = this.mapArray(ratingResponse['dimensions']).map((item: Record<string, Object>) => {
+        return this.textValue(item['label'], this.textValue(item['key'], '')) + ' ' +
+          this.numberText(item['score'], this.numberText(item['value'], '0'));
+      });
+    } catch (error) {
+      this.placeRatingDims = [];
+    }
+  }
+
+  private async claimPlaceMedal(medalId: string): Promise<void> {
+    if (this.authToken.length === 0) {
+      this.placeMedalNotice = '登录后才能领取地标奖牌';
+      return;
+    }
+    try {
+      // 后端要求持有「当前地标」的房间令牌才可领取;令牌按地点签发,故每次领取前重新打开当前地标房间。
+      await this.openPlaceRoom();
+      const response = await this.apiPost('/api/places/' + this.currentPlace().id + '/medals/' + medalId + '/claim', {} as Record<string, Object>);
+      this.placeMedalNotice = this.textValue(response['message'], '已领取');
+      await this.loadPlaceRecognition();
+      this.loadRewards();
+    } catch (error) {
+      this.placeMedalNotice = '领取失败：' + String(error);
+    }
+  }
+
+  // ----- 连接请求:后端规定「接受」必须经双方碰一碰确认,此处仅提供暂不建立 -----
+  private async declineConnection(requestId: string): Promise<void> {
+    try {
+      await this.apiPost('/api/connections/' + requestId + '/decline', {} as Record<string, Object>);
+      this.connectionRequests = this.connectionRequests.filter((item: ConnectionRequestItem) => item.id !== requestId);
+      this.socialError = '';
+    } catch (error) {
+      this.socialError = '处理连接请求失败：' + String(error);
+    }
+  }
+
+  // ----- 安全中心:隐私 / 举报 / 拉黑 / 安全按钮 / 审计(后端 /api/safety/*)-----
+  private async loadSafetyHome(): Promise<void> {
+    if (this.authToken.length === 0) {
+      this.safetyNotice = '登录后查看安全中心';
+      return;
+    }
+    const epoch = this.sessionEpoch;
+    this.safetyNotice = '';
+    try {
+      const home = await this.apiGet('/api/safety/home');
+      if (epoch !== this.sessionEpoch) return;
+      const privacy = this.mapValue(home['privacy']);
+      this.safetyInvisible = privacy['invisible'] === true;
+      this.safetyTodayHidden = privacy['todayHidden'] === true;
+      this.safetyNfcEnabled = privacy['nfcEnabled'] !== false;
+      this.safetyCounts = [
+        this.numberText(home['reportCount'], '0'),
+        this.numberText(home['blockCount'], '0'),
+        this.numberText(home['openSafetyEventCount'], '0')
+      ];
+      const audit = await this.apiGet('/api/safety/audit');
+      if (epoch !== this.sessionEpoch) return;
+      const records: SafetyRecordItem[] = [];
+      this.mapArray(audit['reports']).forEach((item: Record<string, Object>) => {
+        const rid = this.textValue(item['id']);
+        const rec: SafetyRecordItem = {
+          id: 'report-' + rid,
+          rawId: rid,
+          kind: 'report',
+          title: '举报 · ' + this.textValue(item['reason'], '未填写原因'),
+          detail: this.textValue(item['description'], this.textValue(item['targetUserId'], '')),
+          status: this.textValue(item['status'], 'open')
+        };
+        records.push(rec);
+      });
+      this.mapArray(audit['blocks']).forEach((item: Record<string, Object>) => {
+        const bid = this.textValue(item['id']);
+        const rec: SafetyRecordItem = {
+          id: 'block-' + bid,
+          rawId: bid,
+          kind: 'block',
+          title: '拉黑 · ' + this.textValue(item['targetName'], this.textValue(item['targetUserId'], '')),
+          detail: this.textValue(item['reason'], ''),
+          status: this.textValue(item['status'], 'active')
+        };
+        records.push(rec);
+      });
+      this.mapArray(audit['events']).forEach((item: Record<string, Object>) => {
+        const eid = this.textValue(item['id']);
+        const rec: SafetyRecordItem = {
+          id: 'event-' + eid,
+          rawId: eid,
+          kind: 'event',
+          title: '安全事件 · ' + this.textValue(item['severity'], 'high'),
+          detail: this.textValue(item['message'], ''),
+          status: this.textValue(item['status'], 'open')
+        };
+        records.push(rec);
+      });
+      this.safetyRecords = records;
+    } catch (error) {
+      if (epoch === this.sessionEpoch) this.safetyNotice = '安全中心加载失败：' + String(error);
+    }
+  }
+
+  private async savePrivacy(): Promise<void> {
+    try {
+      const body: SafetyPrivacyBody = {
+        invisible: this.safetyInvisible,
+        todayHidden: this.safetyTodayHidden,
+        nfcEnabled: this.safetyNfcEnabled
+      };
+      const response = await this.apiPost('/api/safety/privacy', body);
+      this.safetyNotice = this.textValue(response['message'], '隐私设置已保存');
+    } catch (error) {
+      this.safetyNotice = '隐私设置保存失败：' + String(error);
+    }
+  }
+
+  private async reportCurrentPerson(): Promise<void> {
+    const person = this.currentPerson();
+    try {
+      const body: SafetyReportBody = {
+        targetType: 'user',
+        targetId: person.id,
+        targetUserId: person.id,
+        reason: '骚扰',
+        placeId: this.currentPlace().id,
+        description: '来自安全中心的举报'
+      };
+      const response = await this.apiPost('/api/safety/reports', body);
+      this.safetyNotice = this.textValue(response['message'], '举报已提交');
+      this.loadSafetyHome();
+    } catch (error) {
+      this.safetyNotice = '举报提交失败：' + String(error);
+    }
+  }
+
+  private async blockCurrentPerson(): Promise<void> {
+    const person = this.currentPerson();
+    try {
+      const body: SafetyBlockBody = { targetUserId: person.id, targetName: person.name, reason: '用户主动拉黑' };
+      const response = await this.apiPost('/api/safety/blocks', body);
+      this.safetyNotice = this.textValue(response['message'], '已拉黑');
+      await this.loadSocialData();
+      this.loadSafetyHome();
+    } catch (error) {
+      this.safetyNotice = '拉黑失败：' + String(error);
+    }
+  }
+
+  private async removeSafetyBlock(blockId: string): Promise<void> {
+    try {
+      await this.apiPost('/api/safety/blocks/' + blockId + '/remove', {} as Record<string, Object>);
+      await this.loadSocialData();
+      this.loadSafetyHome();
+    } catch (error) {
+      this.safetyNotice = '解除拉黑失败：' + String(error);
+    }
+  }
+
+  private async triggerPanic(): Promise<void> {
+    try {
+      const body: SafetyPanicBody = {
+        placeId: this.currentPlace().id,
+        latitude: DEMO_LATITUDE,
+        longitude: DEMO_LONGITUDE,
+        deviceId: this.nfcDeviceId,
+        message: '用户触发安全按钮'
+      };
+      const response = await this.apiPost('/api/safety/panic', body);
+      this.safetyNotice = this.textValue(response['message'], '已记录安全事件，请尽快转移到安全位置');
+      this.loadSafetyHome();
+    } catch (error) {
+      this.safetyNotice = '安全按钮触发失败：' + String(error);
+    }
+  }
+
+  private async resolveSafetyEvent(eventId: string): Promise<void> {
+    try {
+      await this.apiPost('/api/safety/events/' + eventId + '/resolve', {} as Record<string, Object>);
+      this.loadSafetyHome();
+    } catch (error) {
+      this.safetyNotice = '标记已解决失败：' + String(error);
+    }
+  }
+
+  // ----- 俱乐部排行榜(后端 /api/clubs/:id/leaderboard)-----
+  private async loadClubLeaderboard(): Promise<void> {
+    const clubIds = this.currentInterest().clubIds || [];
+    if (clubIds.length > 0 && clubIds[0].length > 0) {
+      this.currentClubId = clubIds[0];
+    }
+    try {
+      const response = await this.apiGet('/api/clubs/' + this.currentClubId + '/leaderboard');
+      this.leaderboardTitle = this.textValue(response['label'], '俱乐部排行榜');
+      this.clubLeaderboard = this.mapArray(response['entries']).map((item: Record<string, Object>, index: number) => {
+        const row: RankItem = {
+          id: this.textValue(item['id'], 'rank-' + index),
+          rank: this.numberText(item['rank'], (index + 1).toString()),
+          name: this.textValue(item['name'], '俱乐部'),
+          meta: this.textValue(item['category'], '') + ' · ' + this.numberText(item['memberCount'], '0') + ' 成员',
+          score: this.numberText(item['score'], '0'),
+          mine: item['mine'] === true
+        };
+        return row;
+      });
+    } catch (error) {
+      this.clubLeaderboard = [];
     }
   }
 
@@ -1567,6 +2188,8 @@ struct Index {
       });
     } else if (status === 'confirmed') {
       this.nfcCompleted = true;
+      this.nfcProofId = this.textValue(response['proofId'], this.nfcProofId);
+      this.nfcReviewDone = false;
       if (this.nfcTimer !== -1) clearInterval(this.nfcTimer);
       this.nfcTimer = -1;
       const reward = this.mapValue(response['reward']);
@@ -2959,10 +3582,54 @@ struct Index {
           .margin({ bottom: 10 })
           .onClick(() => { this.selectedActivityIndex = index; this.go('placeActivity'); });
         }, (item: string) => item);
-        this.SectionTitle('排行榜与纪念徽章', '示例展示 · 非上链证明');
-        ForEach(this.currentPlace().medals, (item: string) => {
-          this.ListCard('🏅', item, '真实到场、任务或比赛后可领取展示');
-        }, (item: string) => item);
+        this.SectionTitle('地标奖牌', '真实到场 / 评价 / 比赛后可领取 · 数字藏品凭证');
+        if (this.placeMedalNotice.length > 0) {
+          Text(this.placeMedalNotice).fontSize(12).fontColor(C_DEEP).width('100%').margin({ bottom: 8 });
+        }
+        if (this.placeMedals.length === 0) {
+          ForEach(this.currentPlace().medals, (item: string) => {
+            this.ListCard('🏅', item, '真实到场、任务或比赛后可领取展示');
+          }, (item: string) => item);
+        }
+        ForEach(this.placeMedals, (item: PlaceMedalItem) => {
+          Row() {
+            this.AvatarBox(item.glyph, C_IVORY, C_GOLD, 42);
+            Column() {
+              Text(item.name + ' · ' + item.rarity)
+                .fontSize(15)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(C_INK)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis });
+              Text(item.owned ? item.chainLabel + (item.tokenId.length > 0 ? ' · ' + item.tokenId : '') : item.condition + ' · 进度 ' + item.progressLabel)
+                .fontSize(12)
+                .fontColor(C_MUTED)
+                .lineHeight(18)
+                .margin({ top: 4 });
+            }
+            .layoutWeight(1)
+            .margin({ left: 12 });
+            if (item.owned) {
+              Text('已拥有').fontSize(12).fontWeight(FontWeight.Bold).fontColor(C_DEEP);
+            } else if (item.claimable) {
+              Button('领取')
+                .height(34)
+                .fontSize(13)
+                .fontColor(Color.White)
+                .backgroundColor(C_DEEP)
+                .borderRadius(12)
+                .onClick(() => { this.claimPlaceMedal(item.id); });
+            } else {
+              Text(item.progressLabel).fontSize(12).fontColor('#A8A294');
+            }
+          }
+          .width('100%')
+          .padding(14)
+          .backgroundColor(C_CARD)
+          .border({ width: 1, color: C_LINE })
+          .borderRadius(15)
+          .margin({ bottom: 10 });
+        }, (item: PlaceMedalItem) => item.id);
         Row() {
           Button('地点广场')
             .layoutWeight(1)
@@ -3001,6 +3668,14 @@ struct Index {
       this.RatingRow('安全感', this.currentPlace().safety);
       this.RatingRow('活动质量', this.currentPlace().activity);
       this.RatingRow('小世界丰富度', this.currentPlace().world);
+      if (this.placeRatingDims.length > 0) {
+        Text('后端评分 · ' + this.placeRatingDims.join(' / '))
+          .fontSize(12)
+          .fontColor(C_DEEP)
+          .lineHeight(18)
+          .width('100%')
+          .margin({ top: 10 });
+      }
       Text('真实碰触评价数 ' + this.currentPlace().attend + ' · 复参率 42% · ' + this.currentPlace().trust)
         .fontSize(12)
         .fontColor(C_MUTED)
@@ -3103,6 +3778,14 @@ struct Index {
           .borderRadius(18)
           .margin({ left: 8 })
           .onClick(() => { this.sendPlaceRoomMessage(); });
+        Button('分享')
+          .width(64)
+          .height(46)
+          .fontColor(C_DEEP)
+          .backgroundColor('#EEF3F1')
+          .borderRadius(18)
+          .margin({ left: 6 })
+          .onClick(() => { this.sharePlaceRoomPost(); });
       }
       .padding({ left: 22, right: 22, bottom: 18 });
     }
@@ -3508,7 +4191,10 @@ struct Index {
     Scroll() {
       Column() {
         this.BackHeader('俱乐部', 'interest');
-        this.ListCard('⌂', 'State Library Reading Club', '读书 / 安静社交 / 新人友好');
+        this.ListCard('⌂', this.clubName.length > 0 ? this.clubName : 'State Library Reading Club', this.clubName.length > 0 ? this.clubMeta : '读书 / 安静社交 / 新人友好');
+        if (this.clubSummary.length > 0) {
+          Text(this.clubSummary).fontSize(13).fontColor(C_MUTED).lineHeight(20).width('100%').margin({ bottom: 10 });
+        }
         Row() {
           this.AvatarBox('榜', '#FDF7EC', C_GOLD, 42);
           Column() {
@@ -3516,7 +4202,7 @@ struct Index {
               .fontSize(15)
               .fontWeight(FontWeight.Bold)
               .fontColor(C_INK);
-            Text('林间书页 156 · 城市手帐 132 · 慢半拍摄影 98')
+            Text(this.clubLeaderboard.length > 0 ? this.clubLeaderboard.slice(0, 3).map((item: RankItem) => item.name + ' ' + item.score).join(' · ') : '林间书页 156 · 城市手帐 132 · 慢半拍摄影 98')
               .fontSize(12)
               .fontColor(C_MUTED)
               .margin({ top: 4 });
@@ -3534,7 +4220,7 @@ struct Index {
         .borderRadius(15)
         .margin({ bottom: 10 })
         .onClick(() => this.go('leaderboard'));
-        this.ListCard('◎', '关联地标', 'State Library · City Book Corner');
+        this.ListCard('◎', '关联地标', this.clubPlace.length > 0 ? this.clubPlace : 'State Library · City Book Corner');
       }
       .padding({ left: 22, right: 22, top: 14 });
     }
@@ -4078,6 +4764,24 @@ struct Index {
           Button('重试').onClick(() => { this.loadSocialData(); });
         }
         if (mode === 'moments') {
+          Row() {
+            TextInput({ placeholder: '发一条只给真实见过的人看的动态…', text: this.momentDraft })
+              .layoutWeight(1)
+              .height(44)
+              .backgroundColor(C_CARD)
+              .borderRadius(16)
+              .onChange((value: string) => { this.momentDraft = value; });
+            Button('发布')
+              .width(72)
+              .height(44)
+              .fontColor(Color.White)
+              .backgroundColor(C_DEEP)
+              .borderRadius(16)
+              .margin({ left: 8 })
+              .onClick(() => { this.publishMoment(); });
+          }
+          .width('100%')
+          .margin({ bottom: 12 });
           if (this.moments.length === 0) {
             Text('暂无动态').fontColor(C_MUTED).padding(24);
           }
@@ -4085,6 +4789,49 @@ struct Index {
             this.MomentCard(item);
           }, (item: MomentItem) => item.author + item.time);
         } else {
+          if (mode === 'friends' && this.connectionRequests.length > 0) {
+            this.SectionTitle('新的连接请求', '接受需双方碰一碰确认');
+            ForEach(this.connectionRequests, (item: ConnectionRequestItem) => {
+              Row() {
+                this.AvatarBox('＋', '#F5F3EE', C_DEEP, 42);
+                Column() {
+                  Text(item.name + ' 想连接')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(C_INK);
+                  Text(item.source.length > 0 ? '来源：' + item.source : '通过碰一碰确认后建立可信连接')
+                    .fontSize(12)
+                    .fontColor(C_MUTED)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .margin({ top: 3 });
+                }
+                .layoutWeight(1)
+                .margin({ left: 11 });
+                Button('去碰一碰')
+                  .height(32)
+                  .fontSize(12)
+                  .fontColor(Color.White)
+                  .backgroundColor(C_DEEP)
+                  .borderRadius(12)
+                  .onClick(() => this.go('nfcTouch'));
+                Button('暂不')
+                  .height(32)
+                  .fontSize(12)
+                  .fontColor(C_MUTED)
+                  .backgroundColor('#F5F3EE')
+                  .borderRadius(12)
+                  .margin({ left: 6 })
+                  .onClick(() => { this.declineConnection(item.id); });
+              }
+              .width('100%')
+              .padding(12)
+              .backgroundColor(C_CARD)
+              .border({ width: 1, color: C_LINE })
+              .borderRadius(14)
+              .margin({ bottom: 9 });
+            }, (item: ConnectionRequestItem) => item.id);
+          }
           if (this.people.length === 0) {
             Text(this.authToken.length === 0 ? '登录后查看朋友和对话' : '还没有建立连接的朋友')
               .fontColor(C_MUTED).padding(24);
@@ -4183,17 +4930,21 @@ struct Index {
   LeaderboardPage() {
     Scroll() {
       Column() {
-        this.BackHeader('排行榜', 'chat');
-        Row() {
-          this.PillText('读书', true, C_GOLD);
-          this.PillText('摄影', false, C_DEEP);
-          this.PillText('全部', false, C_DEEP);
+        this.BackHeader(this.leaderboardTitle, 'chat');
+        Text('按真实到场、活动贡献和可信互动综合计算，不以聊天热度计分')
+          .fontSize(12)
+          .fontColor(C_MUTED)
+          .width('100%')
+          .margin({ top: 6, bottom: 12 });
+        if (this.clubLeaderboard.length === 0) {
+          this.RankRow('1', '林间共读社', '读书俱乐部 · 非好友', '156', true);
+          ForEach(this.people, (person: ChatPerson, index: number) => {
+            this.RankRow((index + 2).toString(), person.name, person.tag, (132 - index * 18).toString(), false);
+          }, (person: ChatPerson) => person.id);
         }
-        .margin({ top: 8, bottom: 14 });
-        this.RankRow('1', '林间共读社', '读书俱乐部 · 非好友', '156', true);
-        ForEach(this.people, (person: ChatPerson, index: number) => {
-          this.RankRow((index + 2).toString(), person.name, person.tag, (132 - index * 18).toString(), false);
-        }, (person: ChatPerson) => person.id);
+        ForEach(this.clubLeaderboard, (item: RankItem) => {
+          this.RankRow(item.rank, item.name + (item.mine ? ' · 我的' : ''), item.meta, item.score, item.rank === '1');
+        }, (item: RankItem) => item.id);
       }
       .padding({ left: 22, right: 22, top: 14, bottom: 28 });
     }
@@ -4318,6 +5069,11 @@ struct Index {
               .fontSize(13)
               .fontColor(C_MUTED)
               .margin({ top: 5 });
+            Text('✦ ' + this.profilePoints + ' 积分')
+              .fontSize(13)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(C_GOLD)
+              .margin({ top: 4 });
             Text(this.profileIntentText)
               .fontSize(13)
               .fontColor(C_MUTED)
@@ -4628,6 +5384,7 @@ struct Index {
       this.NfcStatusBlock('✓', '双方连接已建立', this.nfcStatus);
       Text('好感度 ' + this.nfcAffinityText + ' · 积分 ' + this.nfcPointsText).fontColor(C_DEEP);
       Text(this.nfcBadgeText).fontColor(C_MUTED);
+      this.NfcReviewBlock();
       Button('进入聊天')
         .width('100%')
         .height(54)
@@ -4721,6 +5478,7 @@ struct Index {
       .border({ width: 1, color: C_LINE })
       .borderRadius(16)
       .margin({ top: 10 });
+      this.NfcReviewBlock();
       Button('收下并进入聊天')
         .width('100%')
         .height(54)
@@ -4732,6 +5490,38 @@ struct Index {
         .margin({ top: 18 })
         .onClick(() => this.go('chatDetail'));
     }
+  }
+
+  @Builder
+  NfcReviewBlock() {
+    Column() {
+      Text(this.nfcReviewDone ? '✓ 已基于本次到场凭证提交互评' : '互评这次碰面（基于真实到场凭证，仅限碰触双方）')
+        .fontSize(13)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(C_INK)
+        .width('100%');
+      if (!this.nfcReviewDone) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.SelectableChip('还会再来这里', this.nfcReviewRepeat, () => { this.nfcReviewRepeat = !this.nfcReviewRepeat; });
+        }
+        .width('100%')
+        .margin({ top: 8 });
+        Button('提交互评')
+          .width('100%')
+          .height(44)
+          .fontColor(C_DEEP)
+          .backgroundColor('#EEF3F1')
+          .borderRadius(14)
+          .margin({ top: 8 })
+          .onClick(() => { this.submitNfcReview(); });
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(C_CARD)
+    .border({ width: 1, color: C_LINE })
+    .borderRadius(16)
+    .margin({ top: 12 });
   }
 
   @Builder
@@ -5112,7 +5902,11 @@ struct Index {
     Scroll() {
       Column() {
         this.BackHeader(this.profileSubTitle(), 'profile');
-        if (this.page === 'meTrophies') {
+        if ((this.page === 'meTrophies' || this.page === 'meClubs' || this.page === 'meSchedule' || this.page === 'meInterestData') && this.meRows.length > 0) {
+          ForEach(this.meRows, (item: MeRowItem) => {
+            this.ListCard(item.icon, item.title, item.body);
+          }, (item: MeRowItem) => item.id);
+        } else if (this.page === 'meTrophies') {
           this.ListCard('冠', '阅读同行者', 'State Library · 2026');
           this.ListCard('奖', '咖啡地图员', 'Market Lane · 2026');
         } else if (this.page === 'meMoments') {
@@ -5154,8 +5948,147 @@ struct Index {
           ForEach(this.nfcHistory, (item: NfcHistoryItem) => {
             this.ListCard('NFC', item.title, item.detail);
           }, (item: NfcHistoryItem) => item.id);
+        } else if (this.page === 'meRewards') {
+          Row() {
+            this.StatBox(this.profilePoints, '积分');
+            this.StatBox(this.rewardMedals.length.toString(), '藏品');
+            this.StatBox(this.rewardAffinity.length.toString(), '好感关系');
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(C_CARD)
+          .borderRadius(20)
+          .margin({ bottom: 14 });
+          if (this.rewardError.length > 0) {
+            Text(this.rewardError).fontColor(C_ORANGE).width('100%').margin({ bottom: 10 });
+          }
+          this.SectionTitle('我的徽章与藏品', '碰面 · 商家 · 地标');
+          if (this.rewardMedals.length === 0) {
+            Text('还没有徽章。去真实碰一碰、到店评价或领取地标奖牌吧').fontColor(C_MUTED).width('100%').margin({ bottom: 10 });
+          }
+          ForEach(this.rewardMedals, (item: RewardMedalItem) => {
+            Column() {
+              this.ListCard(item.rarity, item.kindLabel + ' · ' + item.name,
+                '#' + item.editionNumber + ' · ' + this.chainStatusLabel(item.chainStatus) +
+                (item.tokenId.length > 0 ? ' · ' + item.tokenId : '') +
+                (item.earnedAt.length > 0 ? ' · ' + item.earnedAt : ''));
+              if (item.tokenId.length > 0) {
+                Button(this.collectibleDetailToken === item.tokenId ? '收起凭证' : '查看凭证')
+                  .height(32)
+                  .fontSize(12)
+                  .fontColor(C_DEEP)
+                  .backgroundColor('#EEF3F1')
+                  .borderRadius(12)
+                  .margin({ bottom: 8 })
+                  .onClick(() => { this.loadCollectible(item.tokenId); });
+              }
+              if (this.collectibleDetailToken === item.tokenId && this.collectibleDetailText.length > 0) {
+                Text(this.collectibleDetailText)
+                  .fontSize(12)
+                  .fontColor(C_MUTED)
+                  .lineHeight(18)
+                  .width('100%')
+                  .padding(12)
+                  .backgroundColor(C_IVORY)
+                  .borderRadius(12)
+                  .margin({ bottom: 10 });
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start);
+          }, (item: RewardMedalItem) => item.id);
+          this.SectionTitle('好感度', '每次真实碰面 +6');
+          if (this.rewardAffinity.length === 0) {
+            Text('暂无好感度记录').fontColor(C_MUTED).width('100%');
+          }
+          ForEach(this.rewardAffinity, (item: AffinityItem) => {
+            this.ListCard('♥', item.peerName, '好感度 ' + item.value);
+          }, (item: AffinityItem) => item.peerUserId);
+          Button('刷新').margin({ top: 8 }).onClick(() => { this.loadRewards(); });
+        } else if (this.page === 'meSafety') {
+          Row() {
+            this.StatBox(this.safetyCounts[0], '举报');
+            this.StatBox(this.safetyCounts[1], '拉黑中');
+            this.StatBox(this.safetyCounts[2], '待处理事件');
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(C_CARD)
+          .borderRadius(20)
+          .margin({ bottom: 14 });
+          if (this.safetyNotice.length > 0) {
+            Text(this.safetyNotice).fontColor(C_DEEP).width('100%').margin({ bottom: 10 });
+          }
+          this.SectionTitle('隐私设置', '保存后立即生效');
+          Flex({ wrap: FlexWrap.Wrap }) {
+            this.SelectableChip('隐身模式', this.safetyInvisible, () => { this.safetyInvisible = !this.safetyInvisible; });
+            this.SelectableChip('今天不想被发现', this.safetyTodayHidden, () => { this.safetyTodayHidden = !this.safetyTodayHidden; });
+            this.SelectableChip('允许碰一碰', this.safetyNfcEnabled, () => { this.safetyNfcEnabled = !this.safetyNfcEnabled; });
+          }
+          .width('100%');
+          Button('保存隐私设置')
+            .width('100%')
+            .height(48)
+            .fontColor(Color.White)
+            .backgroundColor(C_DEEP)
+            .borderRadius(16)
+            .margin({ top: 10, bottom: 14 })
+            .onClick(() => { this.savePrivacy(); });
+          this.SectionTitle('紧急与举报', '举报 / 拉黑对当前聊天对象生效');
+          Row() {
+            Button('安全按钮')
+              .layoutWeight(1)
+              .height(48)
+              .fontColor(Color.White)
+              .backgroundColor(C_ORANGE)
+              .borderRadius(16)
+              .onClick(() => { this.triggerPanic(); });
+            Button('举报 ' + this.currentPerson().name)
+              .layoutWeight(1)
+              .height(48)
+              .fontColor(C_DEEP)
+              .backgroundColor('#EEF3F1')
+              .borderRadius(16)
+              .margin({ left: 10 })
+              .onClick(() => { this.reportCurrentPerson(); });
+          }
+          .width('100%');
+          Button('拉黑 ' + this.currentPerson().name)
+            .width('100%')
+            .height(44)
+            .fontColor(C_ORANGE)
+            .backgroundColor(C_CARD)
+            .border({ width: 1, color: '#E7CBB8' })
+            .borderRadius(16)
+            .margin({ top: 10, bottom: 14 })
+            .onClick(() => { this.blockCurrentPerson(); });
+          this.SectionTitle('安全记录', '举报 / 拉黑 / 事件');
+          if (this.safetyRecords.length === 0) {
+            Text('暂无记录').fontColor(C_MUTED).width('100%');
+          }
+          ForEach(this.safetyRecords, (item: SafetyRecordItem) => {
+            Column() {
+              this.ListCard(item.kind === 'block' ? '黑' : (item.kind === 'event' ? '急' : '报'), item.title, item.detail + ' · ' + item.status);
+              if (item.kind === 'block' && item.status === 'active') {
+                Button('解除拉黑').margin({ bottom: 8 }).onClick(() => { this.removeSafetyBlock(item.rawId); });
+              }
+              if (item.kind === 'event' && item.status === 'open') {
+                Button('标记已解决').margin({ bottom: 8 }).onClick(() => { this.resolveSafetyEvent(item.rawId); });
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start);
+          }, (item: SafetyRecordItem) => item.id);
         } else {
-          this.ListCard('隐', '隐私设置', '今天不想被发现 / 隐身模式');
+          this.ListCard('隐', '隐私设置', '隐身 / 今天不想被发现 / 允许碰一碰 — 在安全中心保存');
+          Button('打开安全中心')
+            .width('100%')
+            .height(46)
+            .fontColor(Color.White)
+            .backgroundColor(C_DEEP)
+            .borderRadius(16)
+            .margin({ bottom: 12 })
+            .onClick(() => this.go('meSafety'));
           this.ListCard('通', '通知设置', '活动提醒、连接请求、地点广场');
           Text(this.backendStatus).fontColor(C_MUTED).width('100%');
           Button(this.authBusy ? '正在退出…' : '退出登录')
@@ -5177,6 +6110,8 @@ struct Index {
     if (this.page === 'meSchedule') return '个人比赛日程';
     if (this.page === 'meInterestData') return '兴趣记录数据';
     if (this.page === 'meNfc') return '碰一碰信息';
+    if (this.page === 'meRewards') return '我的藏品与积分';
+    if (this.page === 'meSafety') return '安全中心';
     return '设置';
   }
 

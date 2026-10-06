@@ -165,7 +165,7 @@ async function main() {
     });
     assert(meProfile.response.ok, 'me profile endpoint failed');
     assert(meProfile.body.contract === 'SmallWorld Profile v1', 'me profile contract marker missing');
-    assert(Array.isArray(meProfile.body.menu) && meProfile.body.menu.length === 7, 'me profile menu does not match current frontend');
+    assert(Array.isArray(meProfile.body.menu) && meProfile.body.menu.length === 9, 'me profile menu does not match current frontend');
     assert(Array.isArray(meProfile.body.settingsRows) && meProfile.body.settingsRows.length >= 5, 'me settings rows missing');
     assert(Array.isArray(meProfile.body.interestStats) && meProfile.body.interestStats.length > 0, 'me interest stats missing');
     assert(meProfile.body.privacyGuardrails && meProfile.body.privacyGuardrails.invisibleSupported === true, 'me profile privacy guardrails missing');
@@ -780,6 +780,47 @@ async function main() {
 
     const interestAi = await request('/api/interests/ai-assistant', { method: 'POST', body: JSON.stringify({}) });
     assert(interestAi.response.status === 501, 'deferred interest AI should return 501');
+
+    // 地标奖牌领取闭环:无房间令牌必须拒绝;持令牌领取返回 201(已达标)或 403(未达标),
+    // 领取成功后藏品可通过 /api/collectibles/:tokenId 查回,并出现在 /api/me/rewards。
+    const recognitionAuthed = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/recognition`, { headers: authHeaders(token) });
+    assert(recognitionAuthed.response.ok && Array.isArray(recognitionAuthed.body.medals) && recognitionAuthed.body.medals.length > 0, 'authed recognition must list medals');
+    assert(recognitionAuthed.body.medals.every(m => typeof m.claimable === 'boolean' && typeof m.owned === 'boolean' && m.id), 'medals must expose id/claimable/owned');
+    const targetMedal = recognitionAuthed.body.medals.find(m => m.claimable) || recognitionAuthed.body.medals[0];
+    const claimNoRoom = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/medals/${encodeURIComponent(targetMedal.id)}/claim`, {
+      method: 'POST', headers: authHeaders(token), body: JSON.stringify({})
+    });
+    assert(claimNoRoom.response.status === 403 && claimNoRoom.body.error === 'PLACE_ROOM_REQUIRED', 'medal claim without place room token must be rejected');
+    const claimRoom = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/room/open`, {
+      method: 'POST', headers: authHeaders(token), body: JSON.stringify({ deviceId: 'smoke-device' })
+    });
+    assert(claimRoom.response.status === 201 && claimRoom.body.roomToken, 'room open for claim failed');
+    const claim = await request(`/api/places/${encodeURIComponent(firstPlace.id)}/medals/${encodeURIComponent(targetMedal.id)}/claim`, {
+      method: 'POST', headers: { ...authHeaders(token), 'X-Place-Room-Token': claimRoom.body.roomToken }, body: JSON.stringify({})
+    });
+    assert([201, 200, 403].indexOf(claim.response.status) >= 0, `medal claim unexpected status: ${claim.response.status} ${JSON.stringify(claim.body)}`);
+    if (claim.response.status === 403) {
+      assert(claim.body.error === 'MEDAL_NOT_ELIGIBLE', 'ineligible claim must explain the condition');
+    } else {
+      assert(Array.isArray(claim.body.medals), 'claim must return refreshed medals');
+      const ownedMedal = claim.body.medals.find(m => m.id === targetMedal.id);
+      assert(ownedMedal && ownedMedal.owned === true && ownedMedal.tokenId, 'claimed medal must be marked owned with tokenId');
+      const collectible = await request(`/api/collectibles/${encodeURIComponent(ownedMedal.tokenId)}`);
+      assert(collectible.response.ok && collectible.body.tokenId === ownedMedal.tokenId && collectible.body.chainStatus, 'collectible must be readable by tokenId');
+      const rewardsAfterClaim = await request('/api/me/rewards', { headers: authHeaders(token) });
+      assert(rewardsAfterClaim.body.medals.some(m => m.kind === 'landmark' && m.tokenId === ownedMedal.tokenId), 'claimed landmark medal must appear in /api/me/rewards');
+    }
+
+    // 奖励读回:积分/好感度/徽章必须能通过 GET 查回,且与「我」页展示的积分一致。
+    const rewards = await request('/api/me/rewards', { headers: authHeaders(token) });
+    assert(rewards.response.ok, `me rewards endpoint failed: ${JSON.stringify(rewards.body)}`);
+    assert(Number.isFinite(rewards.body.points) && rewards.body.points >= 0, 'rewards points must be a number');
+    assert(Array.isArray(rewards.body.medals) && Array.isArray(rewards.body.affinity), 'rewards medals/affinity lists missing');
+    assert(rewards.body.medals.every(m => typeof m.tokenId === 'string' && m.chainStatus && m.kind), 'rewards medal fields missing');
+    const profileAfterRewards = await request('/api/me/profile', { headers: authHeaders(token) });
+    assert(profileAfterRewards.body.display.score === rewards.body.points, 'profile score must equal readable reward points');
+    assert(profileAfterRewards.body.stats.points === rewards.body.points && profileAfterRewards.body.stats.medalCount === rewards.body.medalCount, 'profile stats must expose points and medalCount');
+    assert(profileAfterRewards.body.rewards && profileAfterRewards.body.rewards.medalCount === rewards.body.medalCount, 'profile home must embed rewards summary');
 
     const worlds = await request('/api/worlds', {
       headers: authHeaders(token)

@@ -23,7 +23,9 @@ const PROFILE_MENU = [
   { icon: '⌂', label: '已加入的俱乐部', bg: '#e7e0ef', color: '#7a5cc0', to: 'meClubs', endpoint: '/api/me/clubs' },
   { icon: '▤', label: '个人比赛日程', bg: '#fdf2ee', color: '#c2542f', to: 'meSchedule', endpoint: '/api/me/schedule' },
   { icon: '◆', label: '兴趣记录数据', bg: '#eef3f1', color: '#3f8a78', to: 'meInterestData', endpoint: '/api/me/interest-data' },
-  { icon: '▣', label: '碰一碰信息', bg: '#f4efe6', color: '#a07b34', to: 'meNfc', endpoint: '/api/me/nfc' }
+  { icon: '▣', label: '碰一碰信息', bg: '#f4efe6', color: '#a07b34', to: 'meNfc', endpoint: '/api/me/nfc' },
+  { icon: '藏', label: '我的藏品与积分', bg: '#fdf7ec', color: '#a07b34', to: 'meRewards', endpoint: '/api/me/rewards' },
+  { icon: '盾', label: '安全中心', bg: '#fdf2ee', color: '#c2542f', to: 'meSafety', endpoint: '/api/safety/home' }
 ];
 
 const PROFILE_SETTINGS_ROWS = [
@@ -60,6 +62,7 @@ const FEATURE_ALIASES = {
   meSchedule: 'schedule',
   meInterestData: 'interest-data',
   meNfc: 'nfc',
+  meRewards: 'rewards',
   meSettings: 'settings'
 };
 
@@ -199,6 +202,54 @@ function profileWorldsFor(data, account) {
     });
 }
 
+// 奖励读回:积分 / 好感度 / 三类徽章(碰面、商家、地标)。此前只写不读,导致闭环断裂。
+function publicMedal(medal) {
+  return {
+    id: medal.id,
+    name: medal.name || medal.medalId || '纪念徽章',
+    rarity: medal.rarity || 'R',
+    tokenId: medal.tokenId || '',
+    editionNumber: Number(medal.editionNumber || 0),
+    placeId: medal.placeId || '',
+    peerUserId: medal.peerUserId || '',
+    chainStatus: medal.chainStatus || 'digital-certificate',
+    chainProvider: medal.chainProvider || 'certificate',
+    txHash: medal.txHash || '',
+    earnedAt: medal.earnedAt || '',
+    metadataUri: medal.tokenId ? `/api/collectibles/${medal.tokenId}` : ''
+  };
+}
+
+function rewardsFor(data, account) {
+  const pointsMap = (data.userPoints && typeof data.userPoints === 'object' && !Array.isArray(data.userPoints)) ? data.userPoints : {};
+  const points = Math.round(Number(pointsMap[account.id] || 0));
+  const affinityMap = (data.affinity && typeof data.affinity === 'object' && !Array.isArray(data.affinity)) ? data.affinity : {};
+  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  const affinity = Object.keys(affinityMap)
+    .filter(key => key.split('__').indexOf(account.id) >= 0)
+    .map(key => {
+      const peerUserId = key.split('__').find(id => id !== account.id) || '';
+      const peer = accounts.find(item => item.id === peerUserId);
+      return { peerUserId, peerName: peer ? (peer.displayName || peerUserId) : peerUserId, value: Math.round(Number(affinityMap[key] || 0)) };
+    })
+    .sort((a, b) => b.value - a.value);
+  const own = item => item.userId === account.id;
+  const friendMedals = arrayOf(data, 'friendMedals').filter(own).map(m => ({ kind: 'meeting', kindLabel: '碰面纪念', ...publicMedal(m) }));
+  const merchantMedals = arrayOf(data, 'merchantMedals').filter(own).map(m => ({ kind: 'merchant', kindLabel: '商家纪念', ...publicMedal(m) }));
+  const landmarkMedals = arrayOf(data, 'userMedals').filter(own).map(m => ({ kind: 'landmark', kindLabel: '地标奖牌', ...publicMedal(m) }));
+  const medals = friendMedals.concat(merchantMedals, landmarkMedals)
+    .sort((a, b) => Date.parse(b.earnedAt || 0) - Date.parse(a.earnedAt || 0));
+  return {
+    points,
+    affinity,
+    medals,
+    medalCount: medals.length,
+    friendMedalCount: friendMedals.length,
+    merchantMedalCount: merchantMedals.length,
+    landmarkMedalCount: landmarkMedals.length
+  };
+}
+
 function profileHome(data, account) {
   const settings = profileSettingsFor(data, account);
   const users = objectOf(data, 'users');
@@ -207,6 +258,7 @@ function profileHome(data, account) {
   const displayName = account.displayName || '城市书签';
   const nfcExchanges = nfcExchangesFor(data, account);
   const friends = arrayOf(data, 'friends').filter(friend => friend.ownerId === account.id);
+  const rewards = rewardsFor(data, account);
 
   return {
     contract: PROFILE_CONTRACT,
@@ -214,7 +266,7 @@ function profileHome(data, account) {
     display: {
       name: displayName,
       avatar: displayName.slice(0, 1),
-      score: Number(userStats.score || 0),
+      score: rewards.points,
       subtitle: (account.interests || []).join(' / ') || '读书 / 咖啡 / 城市探索'
     },
     settings,
@@ -229,8 +281,11 @@ function profileHome(data, account) {
       repeatPlaceCount: Array.isArray(userStats.repeatPlaces) ? userStats.repeatPlaces.length : 0,
       friendCount: friends.length,
       momentCount: myMoments.length,
-      nfcExchangeCount: nfcExchanges.length
+      nfcExchangeCount: nfcExchanges.length,
+      points: rewards.points,
+      medalCount: rewards.medalCount
     },
+    rewards,
     menu: PROFILE_MENU,
     trophies: PROFILE_TROPHIES,
     moments: myMoments,
@@ -302,6 +357,9 @@ function profileFeature(data, account, feature) {
         usedForSeenProof: true
       }
     };
+  }
+  if (normalizedFeature === 'rewards') {
+    return { contract: PROFILE_CONTRACT, title: '我的藏品与积分', ...rewardsFor(data, account) };
   }
   if (normalizedFeature === 'settings') {
     return {
