@@ -2912,7 +2912,7 @@ struct Index {
   }
 
   // 页面级过渡:进入页从右侧 24vp 滑入并淡入,离开页淡出并向左 16vp;返回方向镜像;Tab 切换仅淡切。
-  private pageTransition(): TransitionEffect {
+  private pageSwitchTransition(): TransitionEffect {
     if (this.navDirection === 'tab') {
       return TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseInOut });
     }
@@ -2948,245 +2948,245 @@ struct Index {
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'login') {
           Column() {
             this.LoginPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'register') {
           Column() {
             this.RegisterPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'identity') {
           Column() {
             this.IdentityPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'explore') {
           Column() {
             this.ExplorePage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'place') {
           Column() {
             this.PlacePage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'placeActivity') {
           Column() {
             this.PlaceActivityPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'placeRoom' || this.page === 'placeChat') {
           Column() {
             this.PlaceRoomPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'routePlan') {
           Column() {
             this.RoutePlanPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'routePlanAR') {
           Column() {
             this.RoutePlanARPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'aiRoute') {
           Column() {
             this.AIRoutePage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'interest') {
           Column() {
             this.InterestPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'interestDetail') {
           Column() {
             this.InterestDetailPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'clubDetail') {
           Column() {
             this.ClubDetailPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'interestAI') {
           Column() {
             this.InterestAIPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'world') {
           Column() {
             this.WorldPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'cameraFull') {
           Column() {
             this.CameraFullPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'worldDetail') {
           Column() {
             this.WorldDetailPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'worldEditor') {
           Column() {
             this.WorldEditorPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'shareWorld') {
           Column() {
             this.ShareWorldPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'createWorld') {
           Column() {
             this.CreateWorldPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'chat') {
           Column() {
             this.ChatPage('chat');
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'chatFriends') {
           Column() {
             this.ChatPage('friends');
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'chatMoments') {
           Column() {
             this.ChatPage('moments');
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'chatDetail') {
           Column() {
             this.ChatDetailPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'chatSettings') {
           Column() {
             this.ChatSettingsPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'leaderboard') {
           Column() {
             this.LeaderboardPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'profileDetail' || this.page === 'profileDetailReadOnly') {
           Column() {
             this.ProfileDetailPage(this.page === 'profileDetailReadOnly');
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'profile') {
           Column() {
             this.ProfilePage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'nfcTouch') {
           Column() {
             this.NfcTouchPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'merchantAction') {
           Column() {
             this.MerchantActionPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'merchantRatePlace') {
           Column() {
             this.MerchantRatePlacePage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'merchantRateItem') {
           Column() {
             this.MerchantRateItemPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else if (this.page === 'merchantReward') {
           Column() {
             this.MerchantRewardPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         } else {
           Column() {
             this.ProfileSubPage();
           }
           .width('100%')
           .height('100%')
-          .transition(this.pageTransition());
+          .transition(this.pageSwitchTransition());
         }
         // 底栏叠在内容之上(占满高度、内容贴底),这样毛玻璃背后才有内容可模糊。
         // 外层 Stack 是 TopStart 对齐,故这里用满高容器 + FlexAlign.End 把底栏压到底部。
