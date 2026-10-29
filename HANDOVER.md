@@ -45,7 +45,30 @@ cd backend && npm run smoke
 
 ### 前端
 
-用 **DevEco Studio** 打开项目根目录构建。⚠️ 见第 5 节「做不了的事」。
+用 **DevEco Studio** 打开项目根目录构建;或者(2026-10-30 起已验证可行)**命令行无头构建 + 模拟器验证**:
+
+```bash
+# 前提:本机已装 DevEco Studio,且项目根目录有本地的 build-profile.json5(gitignored,含签名配置)
+export DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk
+export NODE_HOME=/Applications/DevEco-Studio.app/Contents/tools/node
+export PATH="$NODE_HOME/bin:/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin:$PATH"
+hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon
+# 产物:entry/build/default/outputs/default/entry-default-signed.hap
+```
+
+```bash
+# 模拟器(DevEco Device Manager 启动后 hdc 可见,如 127.0.0.1:5557 手机 / 127.0.0.1:5559 折叠展开)
+HDC=/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc
+$HDC list targets
+$HDC -t 127.0.0.1:5557 rport tcp:8787 tcp:18790     # 把模拟器内 127.0.0.1:8787 转到宿主机后端端口
+$HDC -t 127.0.0.1:5557 install -r entry/build/default/outputs/default/entry-default-signed.hap
+$HDC -t 127.0.0.1:5557 shell aa start -a EntryAbility -b com.microworld.app
+$HDC -t 127.0.0.1:5557 shell snapshot_display -f /data/local/tmp/s.jpeg && $HDC -t 127.0.0.1:5557 file recv /data/local/tmp/s.jpeg ./s.jpeg
+$HDC -t 127.0.0.1:5557 shell uitest dumpLayout -p /data/local/tmp/l.json   # 控件真实坐标,比截图估算可靠
+$HDC -t 127.0.0.1:5557 shell uitest uiInput click <x> <y>                    # 还有 inputText / keyEvent Back / swipe
+```
+
+模拟器驱动注意:密码框聚焦时系统禁止截屏(整屏纯黑,不是崩溃);键盘弹出会遮住下方输入框,每填一个框后用 `keyEvent Back` 收起键盘再点下一个。Map Kit 在模拟器上**可以出图**(真机空白是签名证书问题,见第 5 节)。
 
 前端连后端的地址在 `entry/src/main/ets/pages/Index.ets` 顶部:
 
@@ -132,7 +155,15 @@ MicroWorld/
 - **按压反馈**:`@Styles pressedCard / normalCard`(缩放 0.975 + 压暗),应用于 ListCard、PersonCard、底部 Tab;Tab 图标选中态放大 1.14 并带 220ms 过渡。
 - **选中态颜色过渡**:ChatSegment、SelectableChip、FilterChip、InterestCatChip、WorldTabItem、NfcKindTab 末尾加 `.animation({ duration: 180 })`(注意 `.animation()` 只作用于链上它之前的属性,新增属性请放在它前面)。
 - **入场动效**:聊天气泡、动态卡、列表卡、碰一碰状态块上浮淡入;地点底部卡片上滑入;30 个纵向 Scroll 加 `EdgeEffect.Spring`。
-- ⚠️ 以上**仅做代码级校验**,动效观感需在真机确认;若 `animateTo` 在你的 SDK 提示弃用,可改为 `this.getUIContext().animateTo(...)`。
+- 2026-10-30 已用 hvigorw 编译通过并在手机 / 折叠展开两台模拟器上跑通登录 → 探索 → 兴趣 → 世界 → 聊天 → 我 → 子页。编译时发现 `pageTransition` 是 CustomComponent 保留的生命周期名,已改名为 `pageSwitchTransition`;**不要再把方法命名成 pageTransition / aboutToAppear 等保留名**。若 `animateTo` 在你的 SDK 提示弃用,可改为 `this.getUIContext().animateTo(...)`。
+
+### ✅ 阔直屏 / 折叠展开响应式适配(2026-10-30)
+
+- **断点**:根 Stack 上 `.onAreaChange` 写入 `@State layoutWidth`;`isWide()` = 宽度 ≥ 600vp(阔直屏、折叠展开、平板)。
+- **页面限宽**:分发链每个页面容器加 `.constraintSize({ maxWidth: this.pageMaxWidth() })`;流程/表单页(欢迎、登录、注册、碰一碰、地点详情、设置等)宽屏限 640vp 居中,`fullBleed` 列表里的内容页(explore / interest / world / chat* / profile / worldEditor / worldDetail)撑满。
+- **双列**:`cardWidth()` 宽屏返回 `'49%'`,手机 `'100%'`;ListCard / PersonCard / MomentCard / 兴趣卡 / 世界卡 / 我的页菜单都用它,它们的父容器从 Column 改成 `Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween })`。**新增卡片列表时照此两步做**(卡片 width 用 cardWidth(),父容器用 Flex 换行)。
+- 探索页底部地点卡片 `.constraintSize({ maxWidth: 720 })`。
+- 放进 Flex 换行容器里的非卡片元素(按钮、输入框)必须显式 `.width('100%')`,否则会占半列留空洞(兴趣页"搜索 / 刷新"按钮踩过)。
 
 ### 仍未接入(均为有意为之或非功能性)
 
@@ -154,7 +185,7 @@ MicroWorld/
 
 ### 前端改动后唯一可做的自检
 
-没有编译器,至少验证括号平衡:
+优先用上面第 2 节的 hvigorw 命令行编译(本机有 DevEco 时);没有编译环境时至少验证括号平衡:
 
 ```bash
 node -e '
@@ -176,7 +207,7 @@ console.log("( ):",po,pc,po===pc?"OK":"MISMATCH");
 内容不足一屏时**整页内容会垂直居中悬浮**,看起来像布局错乱。全项目 30 个纵向 Scroll 都已加 `.align(Alignment.Top)` 修复。**新增 Scroll 时务必加上。**
 
 **② `Column` 的 `alignItems` 默认是 `HorizontalAlign.Center`**
-导致标题、卡片被水平居中。需要左对齐时显式写 `.alignItems(HorizontalAlign.Start)`。
+导致标题、卡片被水平居中。需要左对齐时显式写 `.alignItems(HorizontalAlign.Start)`。2026-10-30 模拟器实测又抓到三处:ListCard / PersonCard 的文字 Column、MomentCard 根 Column、我的页头部昵称 Column,均已修;`layoutWeight(1)` 不会改变对齐,照样要加。
 
 **③ 容器缺 `.width('100%')` 会宽度塌陷**
 塌陷后又被父级居中,表现为「整体向右偏」。曾在聊天详情页出现过。
