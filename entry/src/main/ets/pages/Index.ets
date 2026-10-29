@@ -537,6 +537,8 @@ struct Index {
   // 页面过渡方向:forward(进入子页,右滑入)/ back(返回,左滑入)/ tab(主 Tab 切换,淡切)。
   @State navDirection: string = 'forward';
   private pageHistory: string[] = [];
+  // 响应式断点:根容器实际宽度(vp)。≥600 视为宽屏(阔直屏 / 折叠展开 / 平板)。
+  @State layoutWidth: number = 0;
   @State nfcProofId: string = '';
   @State nfcReviewDone: boolean = false;
   @State nfcReviewRepeat: boolean = false;
@@ -2911,6 +2913,24 @@ struct Index {
     .opacity(1)
   }
 
+  private isWide(): boolean {
+    return this.layoutWidth >= 600;
+  }
+
+  // 卡片宽度:宽屏双列(49%),手机单列(100%)。配合 Flex 换行容器使用。
+  private cardWidth(): string {
+    return this.isWide() ? '49%' : '100%';
+  }
+
+  // 宽屏下流程/表单类页面限宽 640vp 居中;内容类页面撑满并走双列。
+  private pageMaxWidth(): number {
+    const fullBleed: string[] = ['explore', 'world', 'cameraFull', 'interest', 'chat', 'chatFriends', 'chatMoments', 'profile', 'worldEditor', 'worldDetail'];
+    if (!this.isWide() || fullBleed.indexOf(this.page) >= 0) {
+      return 100000;
+    }
+    return 640;
+  }
+
   // 页面级过渡:进入页从右侧 24vp 滑入并淡入,离开页淡出并向左 16vp;返回方向镜像;Tab 切换仅淡切。
   private pageSwitchTransition(): TransitionEffect {
     if (this.navDirection === 'tab') {
@@ -2941,13 +2961,14 @@ struct Index {
   build() {
     Column() {
       this.NativeStatusBar();
-      Stack({ alignContent: Alignment.TopStart }) {
+      Stack({ alignContent: Alignment.Top }) {
         if (this.page === 'welcome') {
           Column() {
             this.WelcomePage();
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'login') {
           Column() {
@@ -2955,6 +2976,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'register') {
           Column() {
@@ -2962,6 +2984,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'identity') {
           Column() {
@@ -2969,6 +2992,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'explore') {
           Column() {
@@ -2976,6 +3000,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'place') {
           Column() {
@@ -2983,6 +3008,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'placeActivity') {
           Column() {
@@ -2990,6 +3016,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'placeRoom' || this.page === 'placeChat') {
           Column() {
@@ -2997,6 +3024,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'routePlan') {
           Column() {
@@ -3004,6 +3032,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'routePlanAR') {
           Column() {
@@ -3011,6 +3040,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'aiRoute') {
           Column() {
@@ -3018,6 +3048,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'interest') {
           Column() {
@@ -3025,6 +3056,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'interestDetail') {
           Column() {
@@ -3032,6 +3064,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'clubDetail') {
           Column() {
@@ -3039,6 +3072,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'interestAI') {
           Column() {
@@ -3046,6 +3080,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'world') {
           Column() {
@@ -3053,6 +3088,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'cameraFull') {
           Column() {
@@ -3060,6 +3096,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'worldDetail') {
           Column() {
@@ -3067,6 +3104,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'worldEditor') {
           Column() {
@@ -3074,6 +3112,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'shareWorld') {
           Column() {
@@ -3081,6 +3120,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'createWorld') {
           Column() {
@@ -3088,6 +3128,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'chat') {
           Column() {
@@ -3095,6 +3136,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'chatFriends') {
           Column() {
@@ -3102,6 +3144,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'chatMoments') {
           Column() {
@@ -3109,6 +3152,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'chatDetail') {
           Column() {
@@ -3116,6 +3160,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'chatSettings') {
           Column() {
@@ -3123,6 +3168,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'leaderboard') {
           Column() {
@@ -3130,6 +3176,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'profileDetail' || this.page === 'profileDetailReadOnly') {
           Column() {
@@ -3137,6 +3184,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'profile') {
           Column() {
@@ -3144,6 +3192,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'nfcTouch') {
           Column() {
@@ -3151,6 +3200,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'merchantAction') {
           Column() {
@@ -3158,6 +3208,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'merchantRatePlace') {
           Column() {
@@ -3165,6 +3216,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'merchantRateItem') {
           Column() {
@@ -3172,6 +3224,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else if (this.page === 'merchantReward') {
           Column() {
@@ -3179,6 +3232,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         } else {
           Column() {
@@ -3186,6 +3240,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
+          .constraintSize({ maxWidth: this.pageMaxWidth() })
           .transition(this.pageSwitchTransition());
         }
         // 底栏叠在内容之上(占满高度、内容贴底),这样毛玻璃背后才有内容可模糊。
@@ -3207,6 +3262,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(C_BG)
+    .onAreaChange((oldArea: Area, newArea: Area) => { this.layoutWidth = Number(newArea.width); })
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM]);
   }
 
@@ -3746,6 +3802,7 @@ struct Index {
       .padding({ left: 17, right: 17, top: 14 });
     }
     .width('100%')
+    .constraintSize({ maxWidth: 720 })
     .backgroundColor(C_CARD)
     .borderRadius(24)
     .border({ width: 1, color: C_LINE })
@@ -4270,8 +4327,9 @@ struct Index {
             }, (item: string) => item);
           }
           .width(72);
-          Column() {
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
             TextInput({ placeholder: '搜索兴趣，输入后按搜索', text: this.interestQuery })
+              .width('100%')
               .height(44)
               .fontSize(14)
               .backgroundColor(C_CARD)
@@ -4280,7 +4338,15 @@ struct Index {
               .enterKeyType(EnterKeyType.Search)
               .onChange((value: string) => { this.interestQuery = value; })
               .onSubmit(() => { this.loadInterestData(); });
-            Button('搜索 / 刷新').onClick(() => { this.loadInterestData(); });
+            Button('搜索 / 刷新')
+              .width('100%')
+              .height(42)
+              .fontSize(14)
+              .fontColor(Color.White)
+              .backgroundColor(C_DEEP)
+              .borderRadius(13)
+              .margin({ bottom: 12 })
+              .onClick(() => { this.loadInterestData(); });
             if (this.interestLoading) {
               Text('正在加载…').fontColor(C_MUTED).padding(16);
             } else if (this.interestError.length > 0) {
@@ -4323,6 +4389,7 @@ struct Index {
                   .width('100%')
                   .margin({ top: 8 });
               }
+              .width(this.cardWidth())
               .padding(14)
               .backgroundColor(C_CARD)
               .border({ width: 1, color: C_LINE })
@@ -4639,6 +4706,7 @@ struct Index {
           }
           .margin({ top: 18, bottom: 12 });
 
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
           ForEach(this.worlds, (world: WorldItem, index: number) => {
             Column() {
               Text(world.name)
@@ -4661,6 +4729,7 @@ struct Index {
                 .width('100%')
                 .margin({ top: 8 });
             }
+            .width(this.cardWidth())
             .padding(15)
             .backgroundColor(C_CARD)
             .border({ width: 1, color: C_LINE })
@@ -4668,6 +4737,8 @@ struct Index {
             .margin({ bottom: 10 })
             .onClick(() => { this.selectedWorldIndex = index; this.go('worldDetail'); });
           }, (world: WorldItem) => world.id);
+          }
+          .width('100%');
 
           Button('创建小世界')
             .width('100%')
@@ -4969,7 +5040,7 @@ struct Index {
   @Builder
   ChatPage(mode: string) {
     Scroll() {
-      Column() {
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
         Row() {
           Column() {
             Text(mode === 'friends' ? '朋友' : (mode === 'moments' ? '动态' : '聊天'))
@@ -5336,6 +5407,7 @@ struct Index {
               .margin({ top: 4 });
           }
           .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
           .margin({ left: 14 });
         }
         .width('100%')
@@ -5351,6 +5423,7 @@ struct Index {
         .backgroundColor(C_CARD)
         .borderRadius(20)
         .margin({ top: 20, bottom: 14 });
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
         ForEach(this.profileMenus, (item: ProfileMenuItem) => {
           Row() {
             this.AvatarBox(item.icon, '#F5F3EE', item.tint, 40);
@@ -5364,7 +5437,7 @@ struct Index {
               .fontSize(24)
               .fontColor('#A8A294');
           }
-          .width('100%')
+          .width(this.cardWidth())
           .padding({ left: 14, right: 14, top: 13, bottom: 13 })
           .backgroundColor(C_CARD)
           .border({ width: 1, color: C_LINE })
@@ -5372,6 +5445,8 @@ struct Index {
           .margin({ bottom: 10 })
           .onClick(() => this.go(item.to));
         }, (item: ProfileMenuItem) => item.to);
+        }
+        .width('100%');
         Row() {
           this.AvatarBox('设', '#EEECE5', '#5A6056', 40);
           Text('设置')
@@ -6164,7 +6239,7 @@ struct Index {
   @Builder
   ProfileSubPage() {
     Scroll() {
-      Column() {
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
         this.BackHeader(this.profileSubTitle(), 'profile');
         if ((this.page === 'meTrophies' || this.page === 'meClubs' || this.page === 'meSchedule' || this.page === 'meInterestData') && this.meRows.length > 0) {
           ForEach(this.meRows, (item: MeRowItem) => {
@@ -6629,9 +6704,10 @@ struct Index {
           .margin({ top: 4 });
       }
       .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
       .margin({ left: 12 });
     }
-    .width('100%')
+    .width(this.cardWidth())
     .padding(14)
     .backgroundColor(C_CARD)
     .border({ width: 1, color: C_LINE })
@@ -6710,13 +6786,14 @@ struct Index {
           .margin({ top: 4 });
       }
       .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
       .margin({ left: 11 });
       Text(friendMode ? '联系' : '›')
         .fontSize(friendMode ? 12 : 24)
         .fontWeight(FontWeight.Bold)
         .fontColor(friendMode ? C_DEEP : '#A8A294');
     }
-    .width('100%')
+    .width(this.cardWidth())
     .padding(12)
     .backgroundColor(C_CARD)
     .border({ width: 1, color: C_LINE })
@@ -6753,7 +6830,8 @@ struct Index {
         .fontColor(C_DEEP)
         .margin({ top: 8 });
     }
-    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .width(this.cardWidth())
     .padding(14)
     .backgroundColor(C_CARD)
     .border({ width: 1, color: C_LINE })
