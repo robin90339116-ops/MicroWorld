@@ -534,6 +534,9 @@ struct Index {
   @State clubLeaderboard: RankItem[] = [];
   @State leaderboardTitle: string = '俱乐部排行榜';
   @State currentClubId: string = 'club-library-reading';
+  // 页面过渡方向:forward(进入子页,右滑入)/ back(返回,左滑入)/ tab(主 Tab 切换,淡切)。
+  @State navDirection: string = 'forward';
+  private pageHistory: string[] = [];
   @State nfcProofId: string = '';
   @State nfcReviewDone: boolean = false;
   @State nfcReviewRepeat: boolean = false;
@@ -641,7 +644,18 @@ struct Index {
     if (this.page === 'placeChat' && next !== 'placeChat' && next !== 'place') {
       this.closePlaceRoom();
     }
-    this.page = next;
+    // 判断方向:目标页在历史栈中 → 返回;否则 → 前进。
+    const backIndex = this.pageHistory.indexOf(next);
+    if (backIndex >= 0) {
+      this.navDirection = 'back';
+      this.pageHistory = this.pageHistory.slice(0, backIndex);
+    } else {
+      this.navDirection = 'forward';
+      this.pageHistory = this.pageHistory.concat([this.page]);
+    }
+    animateTo({ duration: 280, curve: Curve.EaseOut }, () => {
+      this.page = next;
+    });
     const tab = this.tabForPage(next);
     if (tab.length > 0) {
       this.activeTab = tab;
@@ -671,8 +685,12 @@ struct Index {
   private mainPage(next: string): void {
     if (this.page === 'nfcTouch') this.stopNfc();
     this.stopChatPolling();
-    this.activeTab = next;
-    this.page = next;
+    this.navDirection = 'tab';
+    this.pageHistory = [];
+    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+      this.activeTab = next;
+      this.page = next;
+    });
     this.loadForPage(next);
   }
 
@@ -2882,80 +2900,293 @@ struct Index {
     this.nfcTimer = -1;
   }
 
+  // 按压反馈:可点卡片 / Tab 轻微缩放与压暗,normal 态必须显式归位。
+  @Styles pressedCard() {
+    .scale({ x: 0.975, y: 0.975 })
+    .opacity(0.82)
+  }
+
+  @Styles normalCard() {
+    .scale({ x: 1, y: 1 })
+    .opacity(1)
+  }
+
+  // 页面级过渡:进入页从右侧 24vp 滑入并淡入,离开页淡出并向左 16vp;返回方向镜像;Tab 切换仅淡切。
+  private pageTransition(): TransitionEffect {
+    if (this.navDirection === 'tab') {
+      return TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseInOut });
+    }
+    const enterX = this.navDirection === 'back' ? -24 : 24;
+    const exitX = this.navDirection === 'back' ? 16 : -16;
+    return TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 280, curve: Curve.EaseOut })
+        .combine(TransitionEffect.translate({ x: enterX, y: 0 })),
+      TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
+        .combine(TransitionEffect.translate({ x: exitX, y: 0 }))
+    );
+  }
+
+  // 列表项 / 气泡 / 卡片入场:轻微上浮 + 淡入。
+  private itemTransition(): TransitionEffect {
+    return TransitionEffect.OPACITY.animation({ duration: 240, curve: Curve.EaseOut })
+      .combine(TransitionEffect.translate({ x: 0, y: 10 }));
+  }
+
+  // 底部弹层:从下方 40vp 上滑。
+  private sheetTransition(): TransitionEffect {
+    return TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut })
+      .combine(TransitionEffect.translate({ x: 0, y: 40 }));
+  }
+
   build() {
     Column() {
       this.NativeStatusBar();
       Stack({ alignContent: Alignment.TopStart }) {
         if (this.page === 'welcome') {
-          this.WelcomePage();
+          Column() {
+            this.WelcomePage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'login') {
-          this.LoginPage();
+          Column() {
+            this.LoginPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'register') {
-          this.RegisterPage();
+          Column() {
+            this.RegisterPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'identity') {
-          this.IdentityPage();
+          Column() {
+            this.IdentityPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'explore') {
-          this.ExplorePage();
+          Column() {
+            this.ExplorePage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'place') {
-          this.PlacePage();
+          Column() {
+            this.PlacePage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'placeActivity') {
-          this.PlaceActivityPage();
+          Column() {
+            this.PlaceActivityPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'placeRoom' || this.page === 'placeChat') {
-          this.PlaceRoomPage();
+          Column() {
+            this.PlaceRoomPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'routePlan') {
-          this.RoutePlanPage();
+          Column() {
+            this.RoutePlanPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'routePlanAR') {
-          this.RoutePlanARPage();
+          Column() {
+            this.RoutePlanARPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'aiRoute') {
-          this.AIRoutePage();
+          Column() {
+            this.AIRoutePage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'interest') {
-          this.InterestPage();
+          Column() {
+            this.InterestPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'interestDetail') {
-          this.InterestDetailPage();
+          Column() {
+            this.InterestDetailPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'clubDetail') {
-          this.ClubDetailPage();
+          Column() {
+            this.ClubDetailPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'interestAI') {
-          this.InterestAIPage();
+          Column() {
+            this.InterestAIPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'world') {
-          this.WorldPage();
+          Column() {
+            this.WorldPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'cameraFull') {
-          this.CameraFullPage();
+          Column() {
+            this.CameraFullPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'worldDetail') {
-          this.WorldDetailPage();
+          Column() {
+            this.WorldDetailPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'worldEditor') {
-          this.WorldEditorPage();
+          Column() {
+            this.WorldEditorPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'shareWorld') {
-          this.ShareWorldPage();
+          Column() {
+            this.ShareWorldPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'createWorld') {
-          this.CreateWorldPage();
+          Column() {
+            this.CreateWorldPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'chat') {
-          this.ChatPage('chat');
+          Column() {
+            this.ChatPage('chat');
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'chatFriends') {
-          this.ChatPage('friends');
+          Column() {
+            this.ChatPage('friends');
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'chatMoments') {
-          this.ChatPage('moments');
+          Column() {
+            this.ChatPage('moments');
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'chatDetail') {
-          this.ChatDetailPage();
+          Column() {
+            this.ChatDetailPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'chatSettings') {
-          this.ChatSettingsPage();
+          Column() {
+            this.ChatSettingsPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'leaderboard') {
-          this.LeaderboardPage();
+          Column() {
+            this.LeaderboardPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'profileDetail' || this.page === 'profileDetailReadOnly') {
-          this.ProfileDetailPage(this.page === 'profileDetailReadOnly');
+          Column() {
+            this.ProfileDetailPage(this.page === 'profileDetailReadOnly');
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'profile') {
-          this.ProfilePage();
+          Column() {
+            this.ProfilePage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'nfcTouch') {
-          this.NfcTouchPage();
+          Column() {
+            this.NfcTouchPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'merchantAction') {
-          this.MerchantActionPage();
+          Column() {
+            this.MerchantActionPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'merchantRatePlace') {
-          this.MerchantRatePlacePage();
+          Column() {
+            this.MerchantRatePlacePage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'merchantRateItem') {
-          this.MerchantRateItemPage();
+          Column() {
+            this.MerchantRateItemPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else if (this.page === 'merchantReward') {
-          this.MerchantRewardPage();
+          Column() {
+            this.MerchantRewardPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         } else {
-          this.ProfileSubPage();
+          Column() {
+            this.ProfileSubPage();
+          }
+          .width('100%')
+          .height('100%')
+          .transition(this.pageTransition());
         }
         // 底栏叠在内容之上(占满高度、内容贴底),这样毛玻璃背后才有内容可模糊。
         // 外层 Stack 是 TopStart 对齐,故这里用满高容器 + FlexAlign.End 把底栏压到底部。
@@ -3079,6 +3310,7 @@ struct Index {
       .width('100%');
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .width('100%')
     .height('100%');
   }
@@ -3143,6 +3375,7 @@ struct Index {
       .padding({ left: 28, right: 28, top: 14, bottom: 32 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -3207,6 +3440,7 @@ struct Index {
       .padding({ left: 28, right: 28, top: 14, bottom: 32 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -3276,6 +3510,7 @@ struct Index {
       .padding({ left: 28, right: 28, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -3513,7 +3748,8 @@ struct Index {
     .width('100%')
     .backgroundColor(C_CARD)
     .borderRadius(24)
-    .border({ width: 1, color: C_LINE });
+    .border({ width: 1, color: C_LINE })
+    .transition(this.sheetTransition());
   }
 
   @Builder
@@ -3652,6 +3888,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -3735,6 +3972,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -3762,6 +4000,7 @@ struct Index {
         .padding({ left: 22, right: 22, top: 16, bottom: 16 });
       }
       .align(Alignment.Top)
+      .edgeEffect(EdgeEffect.Spring)
       .layoutWeight(1);
       Row() {
         TextInput({ placeholder: '在当前地点发言...', text: this.messageDraft })
@@ -3879,6 +4118,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -3971,6 +4211,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%')
     .backgroundColor('#1C1C22');
   }
@@ -4012,6 +4253,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4109,6 +4351,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 16, bottom: 96 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4183,6 +4426,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14, bottom: 28 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4225,6 +4469,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4253,6 +4498,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14, bottom: 28 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4267,6 +4513,7 @@ struct Index {
       .textAlign(TextAlign.Center)
       .backgroundColor(this.worldTab === tab ? '#7A5CC0' : Color.Transparent)
       .borderRadius(10)
+      .animation({ duration: 180, curve: Curve.EaseOut })
       .onClick(() => { this.worldTab = tab; });
   }
 
@@ -4437,6 +4684,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 16, bottom: 96 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4554,6 +4802,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4657,6 +4906,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4712,6 +4962,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4845,6 +5096,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 16, bottom: 96 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4899,6 +5151,7 @@ struct Index {
         .padding({ left: 20, right: 20, top: 14, bottom: 14 });
       }
       .align(Alignment.Top)
+      .edgeEffect(EdgeEffect.Spring)
       .layoutWeight(1);
       Row() {
         TextInput({ placeholder: '输入消息...', text: this.messageDraft })
@@ -4949,6 +5202,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14, bottom: 28 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -4978,6 +5232,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14, bottom: 28 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -5050,6 +5305,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14, bottom: 28 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -5139,6 +5395,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 16, bottom: 96 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -5252,6 +5509,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -5266,6 +5524,7 @@ struct Index {
       .textAlign(TextAlign.Center)
       .backgroundColor(this.nfcKind === kind ? C_DEEP : Color.Transparent)
       .borderRadius(10)
+      .animation({ duration: 180, curve: Curve.EaseOut })
       .onClick(() => { if (this.nfcKind !== kind) { this.stopNfc(); this.nfcKind = kind; } });
   }
 
@@ -5548,7 +5807,8 @@ struct Index {
     .padding(24)
     .backgroundColor('#EEF3F1')
     .borderRadius(18)
-    .margin({ top: 20 });
+    .margin({ top: 20 })
+    .transition(this.itemTransition());
   }
 
   @Builder
@@ -5629,6 +5889,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -5713,6 +5974,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -5786,6 +6048,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -5879,6 +6142,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -6099,6 +6363,7 @@ struct Index {
       .padding({ left: 22, right: 22, top: 14, bottom: 28 });
     }
     .align(Alignment.Top)
+    .edgeEffect(EdgeEffect.Spring)
     .height('100%');
   }
 
@@ -6141,7 +6406,9 @@ struct Index {
         .fontWeight(FontWeight.Bold)
         .fontColor(this.activeTab === tab ? C_DEEP : '#ABADA3')
         .height(24)
-        .textAlign(TextAlign.Center);
+        .textAlign(TextAlign.Center)
+        .scale({ x: this.activeTab === tab ? 1.14 : 1, y: this.activeTab === tab ? 1.14 : 1 })
+        .animation({ duration: 220, curve: Curve.EaseOut });
       Text(label)
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
@@ -6152,6 +6419,7 @@ struct Index {
     .layoutWeight(1)
     .height(56)
     .justifyContent(FlexAlign.Center)
+    .stateStyles({ pressed: this.pressedCard, normal: this.normalCard })
     .onClick(() => this.mainPage(tab));
   }
 
@@ -6260,6 +6528,7 @@ struct Index {
       .border({ width: 1, color: active ? C_DEEP : C_LINE })
       .borderRadius(18)
       .margin({ right: 9, bottom: 10 })
+      .animation({ duration: 180, curve: Curve.EaseOut })
       .onClick(action);
   }
 
@@ -6274,6 +6543,7 @@ struct Index {
       .border({ width: 1, color: this.selectedFilter === text ? C_DEEP : '#E7E2D8' })
       .borderRadius(20)
       .margin({ right: 8 })
+      .animation({ duration: 180, curve: Curve.EaseOut })
       .onClick(() => { this.selectedFilter = text; this.loadExploreData(); });
   }
 
@@ -6291,6 +6561,7 @@ struct Index {
       .border({ width: 1, color: this.selectedInterestCat === text ? C_DEEP : '#E7E2D8' })
       .borderRadius(14)
       .margin({ bottom: 10 })
+      .animation({ duration: 180, curve: Curve.EaseOut })
       .onClick(() => { this.selectedInterestCat = text; this.loadInterestData(); });
   }
 
@@ -6365,7 +6636,9 @@ struct Index {
     .backgroundColor(C_CARD)
     .border({ width: 1, color: C_LINE })
     .borderRadius(15)
-    .margin({ bottom: 10 });
+    .margin({ bottom: 10 })
+    .stateStyles({ pressed: this.pressedCard, normal: this.normalCard })
+    .transition(this.itemTransition());
   }
 
   @Builder
@@ -6412,6 +6685,7 @@ struct Index {
       .border({ width: 1, color: active ? C_DEEP : C_LINE })
       .borderRadius(11)
       .margin({ right: 7 })
+      .animation({ duration: 180, curve: Curve.EaseOut })
       .onClick(() => this.go(to));
   }
 
@@ -6448,6 +6722,8 @@ struct Index {
     .border({ width: 1, color: C_LINE })
     .borderRadius(14)
     .margin({ bottom: 9 })
+    .stateStyles({ pressed: this.pressedCard, normal: this.normalCard })
+    .transition(this.itemTransition())
     .onClick(() => { this.selectedPersonIndex = index; this.go('chatDetail'); });
   }
 
@@ -6482,7 +6758,8 @@ struct Index {
     .backgroundColor(C_CARD)
     .border({ width: 1, color: C_LINE })
     .borderRadius(14)
-    .margin({ bottom: 10 });
+    .margin({ bottom: 10 })
+    .transition(this.itemTransition());
   }
 
   @Builder
@@ -6614,6 +6891,7 @@ struct Index {
       }
     }
     .width('100%')
-    .margin({ bottom: 10 });
+    .margin({ bottom: 10 })
+    .transition(this.itemTransition());
   }
 }

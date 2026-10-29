@@ -126,6 +126,14 @@ MicroWorld/
 - 排行榜 / 俱乐部详情接 `/api/clubs/:id(/leaderboard)`;碰一碰互评接 `/api/reviews/nfc`(确认后出现互评卡);动态发布接 `POST /api/social/moments`;地点广场「分享」接 `/room/shares`,离开时调用 `/room/close`;「我」的奖杯 / 俱乐部 / 日程 / 兴趣数据四个二级页接 `/api/me/:page`。
 - 前端调用路径 23 → 32;冒烟测试新增「奖励读回与展示一致」及「奖牌领取闭环(含无令牌 403 契约)」断言。
 
+### ✅ 动效与交互反馈体系(2026-10-29)
+
+- **页面过渡**:`go()` / `mainPage()` 内用 `animateTo` 切换 `this.page`,分发链每个页面包在带 `.transition(this.pageTransition())` 的容器里;方向由 `pageHistory` 推断——进入子页右滑淡入、返回左滑淡入、Tab 切换仅淡切。
+- **按压反馈**:`@Styles pressedCard / normalCard`(缩放 0.975 + 压暗),应用于 ListCard、PersonCard、底部 Tab;Tab 图标选中态放大 1.14 并带 220ms 过渡。
+- **选中态颜色过渡**:ChatSegment、SelectableChip、FilterChip、InterestCatChip、WorldTabItem、NfcKindTab 末尾加 `.animation({ duration: 180 })`(注意 `.animation()` 只作用于链上它之前的属性,新增属性请放在它前面)。
+- **入场动效**:聊天气泡、动态卡、列表卡、碰一碰状态块上浮淡入;地点底部卡片上滑入;30 个纵向 Scroll 加 `EdgeEffect.Spring`。
+- ⚠️ 以上**仅做代码级校验**,动效观感需在真机确认;若 `animateTo` 在你的 SDK 提示弃用,可改为 `this.getUIContext().animateTo(...)`。
+
 ### 仍未接入(均为有意为之或非功能性)
 
 - `/api/friends*`:与 `/api/social/home` 返回同一份好友 / 聊天数据,前端已通过后者消费。
