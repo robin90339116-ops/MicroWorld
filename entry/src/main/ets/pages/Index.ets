@@ -6,6 +6,7 @@ import { AsyncCallback, BusinessError } from '@kit.BasicServicesKit';
 import SessionVault from '../utils/SessionVault';
 import { SavedNfcSession } from '../utils/SessionVault';
 import util from '@ohos.util';
+import { window } from '@kit.ArkUI';
 
 interface ChatMessageItem {
   id: string;
@@ -454,7 +455,12 @@ const PROFILE_MENUS: ProfileMenuItem[] = [
 @Entry
 @Component
 struct Index {
-  @State page: string = 'welcome';
+  @State @Watch('onPageChanged') page: string = 'welcome';
+  // 系统避让区(vp),由 EntryAbility 按真实机型写入并在旋转/折叠时更新。
+  @StorageProp('safeTop') safeTop: number = 0;
+  @StorageProp('safeBottom') safeBottom: number = 0;
+  @StorageProp('safeLeft') safeLeft: number = 0;
+  @StorageProp('safeRight') safeRight: number = 0;
   @State activeTab: string = 'explore';
   @State selectedFilter: string = '全部';
   @State exploreQuery: string = '';
@@ -694,6 +700,66 @@ struct Index {
       this.page = next;
     });
     this.loadForPage(next);
+  }
+
+  // 深色沉浸页:顶部/底部避让区与侧边用页面自身深色填充,状态栏文字改为浅色。
+  private darkPageColor(): string {
+    if (this.page === 'routePlanAR' || this.page === 'cameraFull') {
+      return '#1C1C22';
+    }
+    if (this.page === 'worldEditor') {
+      return '#201B28';
+    }
+    return '';
+  }
+
+  // 当前页的底色,用于填充状态栏/手势条/刘海背后的区域,保证与页面无接缝。
+  private pageBgColor(): string {
+    const dark = this.darkPageColor();
+    if (dark.length > 0) {
+      return dark;
+    }
+    return this.page === 'explore' ? '#E8ECE5' : C_BG;
+  }
+
+  // 地图页铺到状态栏下面(真正沉浸),其余页在状态栏下方开始排版。
+  private topInset(): number {
+    return this.page === 'explore' ? 0 : this.safeTop;
+  }
+
+  private tabBarBottomPad(): number {
+    return Math.max(10, this.safeBottom);
+  }
+
+  private tabBarHeight(): number {
+    return 8 + 56 + this.tabBarBottomPad();
+  }
+
+  // 带底栏页面的内容底部留白:底栏高度 + 16vp 呼吸空间。
+  private tabClearance(): number {
+    return this.tabBarHeight() + 16;
+  }
+
+  onPageChanged(): void {
+    this.applyStatusBarStyle();
+  }
+
+  private applyStatusBarStyle(): void {
+    const light = this.darkPageColor().length > 0;
+    try {
+      window.getLastWindow(getContext(this)).then((win: window.Window) => {
+        win.setWindowSystemBarProperties({
+          statusBarColor: '#00000000',
+          navigationBarColor: '#00000000',
+          statusBarContentColor: light ? '#FFFFFF' : '#23271F',
+          navigationBarContentColor: light ? '#FFFFFF' : '#23271F'
+        });
+      }).catch((err: BusinessError) => {
+        console.error('[MicroWorld] 状态栏样式更新失败: ' + JSON.stringify(err));
+      });
+    } catch (error) {
+      console.error('[MicroWorld] 状态栏样式更新失败: ' + JSON.stringify(error));
+    }
   }
 
   private shouldShowTab(): boolean {
@@ -3257,11 +3323,20 @@ struct Index {
       }
       .layoutWeight(1)
       .width('100%')
-      .backgroundColor(C_BG);
+      .backgroundColor(this.pageBgColor());
+      // 无底栏页面:底部留出系统手势条区域,用页面底色填充。有底栏时由 TabBar 自己避让。
+      if (!this.shouldShowTab()) {
+        Row() {
+        }
+        .width('100%')
+        .height(this.safeBottom)
+        .backgroundColor(this.pageBgColor());
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(C_BG)
+    .padding({ left: this.safeLeft, right: this.safeRight })
+    .backgroundColor(this.pageBgColor())
     .onAreaChange((oldArea: Area, newArea: Area) => { this.layoutWidth = Number(newArea.width); })
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM]);
   }
@@ -3270,12 +3345,13 @@ struct Index {
   NativeStatusBar() {
     // 顶部安全区占位:内容避开系统状态栏,真机上时间/电量由系统绘制。
     // 不再画写死的假状态栏文本,避免与系统状态栏内容重叠。
+    // 高度取系统真实避让区(状态栏 / 刘海 / 挖孔),不同机型自动适配;探索页地图铺到状态栏下,高度为 0。
     Row() {
     }
     .width('100%')
-    .height(52)
-    // 底色跟随当前页,避免与页面背景出现一条接缝(探索页地图是 #E8ECE5,其余页是 C_BG)。
-    .backgroundColor(this.page === 'explore' ? '#E8ECE5' : C_BG);
+    .height(this.topInset())
+    // 底色跟随当前页,避免与页面背景出现一条接缝。
+    .backgroundColor(this.pageBgColor());
   }
 
 
@@ -3602,7 +3678,7 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-      .padding({ left: 16, right: 16, top: 14, bottom: 92 });
+      .padding({ left: 16, right: 16, top: 14 + this.safeTop, bottom: this.tabClearance() });
     }
     .height('100%')
     .width('100%')
@@ -4415,7 +4491,7 @@ struct Index {
           .margin({ top: 6 })
           .onClick(() => this.go('interestAI'));
       }
-      .padding({ left: 22, right: 22, top: 16, bottom: 96 });
+      .padding({ left: 22, right: 22, top: 16, bottom: this.tabClearance() + 4 });
     }
     .align(Alignment.Top)
     .edgeEffect(EdgeEffect.Spring)
@@ -4752,7 +4828,7 @@ struct Index {
             .onClick(() => this.go('createWorld'));
         }
       }
-      .padding({ left: 22, right: 22, top: 16, bottom: 96 });
+      .padding({ left: 22, right: 22, top: 16, bottom: this.tabClearance() + 4 });
     }
     .align(Alignment.Top)
     .edgeEffect(EdgeEffect.Spring)
@@ -5164,7 +5240,7 @@ struct Index {
         }
       }
       .width('100%')
-      .padding({ left: 22, right: 22, top: 16, bottom: 96 });
+      .padding({ left: 22, right: 22, top: 16, bottom: this.tabClearance() + 4 });
     }
     .align(Alignment.Top)
     .edgeEffect(EdgeEffect.Spring)
@@ -5467,7 +5543,7 @@ struct Index {
         .margin({ bottom: 10 })
         .onClick(() => this.go('meSettings'));
       }
-      .padding({ left: 22, right: 22, top: 16, bottom: 96 });
+      .padding({ left: 22, right: 22, top: 16, bottom: this.tabClearance() + 4 });
     }
     .align(Alignment.Top)
     .edgeEffect(EdgeEffect.Spring)
@@ -6465,8 +6541,8 @@ struct Index {
       this.TabItem('◉', '我', 'profile');
     }
     .width('100%')
-    .height(76)
-    .padding({ left: 10, right: 10, top: 8, bottom: 12 })
+    .height(this.tabBarHeight())
+    .padding({ left: 10, right: 10, top: 8, bottom: this.tabBarBottomPad() })
     // 真机毛玻璃:只用系统材质模糊,不叠 backgroundColor——纯色背景会盖住模糊,
     // 之前真机看着像实心栏就是这个原因。底栏已叠在内容之上,滚动时内容从玻璃下透出。
     .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)

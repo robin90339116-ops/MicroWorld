@@ -165,6 +165,15 @@ MicroWorld/
 - 探索页底部地点卡片 `.constraintSize({ maxWidth: 720 })`。
 - 放进 Flex 换行容器里的非卡片元素(按钮、输入框)必须显式 `.width('100%')`,否则会占半列留空洞(兴趣页"搜索 / 刷新"按钮踩过)。
 
+### ✅ 安全区 / 沉浸式按真实机型适配(2026-10-30)
+
+- 旧实现写死 52vp 状态栏占位,同时 `setWindowSystemBarEnable([])` 把系统状态栏隐藏了,结果每台机器顶部都留一条空白(探索页地图上最明显,深色相机/AR/世界编辑页是一条浅色带)。
+- 现在 `EntryAbility.publishSafeArea()` 读取系统真实避让区(状态栏、刘海/挖孔 `TYPE_CUTOUT`、底部手势条 `TYPE_NAVIGATION_INDICATOR`),换算成 vp 写进 AppStorage(`safeTop/safeBottom/safeLeft/safeRight`),并在 `avoidAreaChange`、`windowSizeChange`(旋转、折叠开合)时刷新。系统状态栏恢复显示,透明背景。
+- `Index` 用 `@StorageProp` 读取:顶部占位高度 = `topInset()`(探索页为 0,地图铺到状态栏下,搜索框下移 safeTop);无底栏页底部垫 safeBottom;根容器左右 padding 避开横屏刘海;所有避让区背景都用 `pageBgColor()`,与当前页同色无接缝。
+- 底栏高度 = `tabBarHeight()`(含手势条避让),带底栏页面内容底部留白用 `tabClearance()`,**不要再写死 76 / 92 / 96**。
+- 深色页(`darkPageColor()`:routePlanAR、cameraFull、worldEditor)切换时 `@Watch('onPageChanged')` 把状态栏文字改为白色。新增深色页时把页面键加进 `darkPageColor()`。
+- 已在手机与折叠展开两台模拟器验证(两者状态栏约 39vp、手势条 28vp,与旧的 52vp 都不符);横屏刘海左右避让的代码已写,但手头模拟器没有侧边刘海,未实测。
+
 ### 仍未接入(均为有意为之或非功能性)
 
 - `/api/friends*`:与 `/api/social/home` 返回同一份好友 / 聊天数据,前端已通过后者消费。
